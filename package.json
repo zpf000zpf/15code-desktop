@@ -1,0 +1,47 @@
+{
+  "name": "15code-desktop",
+  "version": "1.0.0",
+  "description": "15code 桌面客户端 — 统一 Claude / GPT / GLM 接入",
+  "main": "src/main.js",
+  "author": "15code <dev@15code.com>",
+  "license": "Apache-2.0",
+  "homepage": "https://15code.com",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --dev",
+    "build:win": "electron-builder --win --x64",
+    "build:mac": "electron-builder --mac",
+    "build:linux": "electron-builder --linux"
+  },
+  "devDependencies": {
+    "electron": "^32.0.0",
+    "electron-builder": "^25.0.0"
+  },
+  "build": {
+    "appId": "com.15code.desktop",
+    "productName": "15code",
+    "directories": { "output": "dist", "buildResources": "build" },
+    "files": ["src/**/*", "package.json"],
+    "win": {
+      "target": [{ "target": "nsis", "arch": ["x64"] }],
+      "artifactName": "15code-desktop-${version}-${arch}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "shortcutName": "15code"
+    },
+    "mac": {
+      "target": [{ "target": "dmg", "arch": ["x64", "arm64"] }],
+      "category": "public.app-category.productivity",
+      "artifactName": "15code-desktop-${version}-${arch}.${ext}"
+    },
+    "linux": {
+      "target": ["AppImage"],
+      "category": "Office",
+      "artifactName": "15code-desktop-${version}.${ext}"
+    },
+    "publish": null
+  }
+}

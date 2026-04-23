@@ -1,0 +1,893 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8"/>
+<title>15code</title>
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self' https://new.15code.com https://claude.15code.com https://15code.com; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; img-src 'self' data:;">
+<style>
+:root {
+  --bg-primary: #0a0a0f;
+  --bg-secondary: #12121a;
+  --bg-card: #16161f;
+  --bg-elevated: #1c1c28;
+  --border: #2a2a3a;
+  --border-light: #3a3a4a;
+  --text-primary: #f5f5f7;
+  --text-secondary: #a0a0b0;
+  --text-muted: #6a6a7a;
+  --accent: #6366f1;
+  --accent-hover: #818cf8;
+  --accent-glow: rgba(99, 102, 241, 0.3);
+  --success: #10b981;
+  --error: #ef4444;
+  --warn: #f59e0b;
+  --gradient: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+  --shadow-glow: 0 0 40px rgba(99, 102, 241, 0.15);
+}
+* { margin:0; padding:0; box-sizing:border-box; }
+html, body { height: 100%; overflow: hidden; }
+body {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-size: 14px;
+  line-height: 1.6;
+}
+button, input, select, textarea {
+  font-family: inherit;
+  font-size: inherit;
+}
+
+/* ─── 登录页 ─── */
+.login-page {
+  height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: radial-gradient(ellipse at center, rgba(99,102,241,0.1) 0%, var(--bg-primary) 70%);
+}
+.login-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 36px 40px;
+  width: 380px;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+}
+.login-brand {
+  font-size: 28px;
+  font-weight: 700;
+  background: var(--gradient);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  text-align: center;
+  margin-bottom: 4px;
+}
+.login-sub {
+  text-align: center;
+  color: var(--text-muted);
+  margin-bottom: 28px;
+  font-size: 13px;
+}
+.login-form label {
+  display: block;
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin-bottom: 6px;
+  margin-top: 14px;
+}
+.login-form input {
+  width: 100%;
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  outline: none;
+  transition: border 0.2s, box-shadow 0.2s;
+}
+.login-form input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-glow);
+}
+.login-btn {
+  width: 100%;
+  margin-top: 20px;
+  padding: 12px;
+  border-radius: 10px;
+  border: none;
+  background: var(--gradient);
+  color: #fff;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.login-btn:hover { box-shadow: var(--shadow-glow); }
+.login-btn:disabled { opacity: 0.5; cursor: wait; }
+.login-links {
+  margin-top: 20px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.login-links a { color: var(--accent-hover); text-decoration: none; cursor: pointer; margin: 0 8px; }
+.login-err {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  color: var(--error);
+  font-size: 13px;
+}
+
+/* ─── 主界面布局 ─── */
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+}
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 18px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.brand {
+  font-size: 18px;
+  font-weight: 700;
+  background: var(--gradient);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+.topbar-right { display: flex; align-items: center; gap: 12px; }
+.model-pick {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+  padding: 7px 14px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 13px;
+  min-width: 200px;
+}
+.model-pick:focus { outline: none; border-color: var(--accent); }
+.balance {
+  color: var(--text-muted);
+  font-size: 12px;
+  padding: 7px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-elevated);
+}
+.balance b { color: var(--accent-hover); font-weight: 600; }
+.menu-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  padding: 6px 10px;
+  cursor: pointer;
+  border-radius: 6px;
+  font-size: 13px;
+}
+.menu-btn:hover { background: var(--bg-elevated); color: var(--text-primary); }
+
+/* ─── 聊天区 ─── */
+.chat-area {
+  flex: 1;
+  overflow-y: auto;
+  padding: 24px 0 16px;
+}
+.messages {
+  max-width: 780px;
+  margin: 0 auto;
+  padding: 0 20px;
+}
+.msg {
+  margin-bottom: 20px;
+  animation: fade-in 0.3s;
+}
+@keyframes fade-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+.msg-role {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 500;
+}
+.msg-role.user b { color: var(--accent-hover); }
+.msg-role.assistant b { color: var(--success); }
+.msg-body {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 14px 18px;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  line-height: 1.7;
+  font-size: 14px;
+}
+.msg.user .msg-body { background: var(--bg-secondary); }
+.msg-body code {
+  background: var(--bg-elevated);
+  padding: 2px 6px;
+  border-radius: 4px;
+  color: var(--accent-hover);
+  font-family: "SF Mono", Consolas, monospace;
+  font-size: 13px;
+}
+.msg-body pre {
+  background: #0d0d14;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 14px;
+  overflow-x: auto;
+  margin: 10px 0;
+  font-family: "SF Mono", Consolas, monospace;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.msg-body pre code { background: transparent; padding: 0; color: var(--text-primary); }
+.msg-body h1, .msg-body h2, .msg-body h3 {
+  margin: 14px 0 8px;
+  line-height: 1.3;
+}
+.msg-body h1 { font-size: 20px; }
+.msg-body h2 { font-size: 17px; }
+.msg-body h3 { font-size: 15px; }
+.msg-body ul, .msg-body ol { padding-left: 24px; margin: 6px 0; }
+.msg-body blockquote { border-left: 3px solid var(--accent); padding-left: 12px; color: var(--text-secondary); margin: 8px 0; }
+.msg-body a { color: var(--accent-hover); }
+.msg-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+.msg:hover .msg-actions { opacity: 1; }
+.msg-actions button {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.msg-actions button:hover { border-color: var(--accent); color: var(--text-primary); }
+
+.hero-empty {
+  text-align: center;
+  padding: 60px 20px;
+  color: var(--text-muted);
+}
+.hero-empty h2 {
+  font-size: 24px;
+  margin-bottom: 8px;
+  background: var(--gradient);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+/* ─── 输入区 ─── */
+.input-area {
+  flex-shrink: 0;
+  border-top: 1px solid var(--border);
+  padding: 14px 20px;
+  background: var(--bg-secondary);
+}
+.input-wrap {
+  max-width: 780px;
+  margin: 0 auto;
+  position: relative;
+}
+.attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.attach-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 3px 10px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.attach-chip .x {
+  cursor: pointer;
+  color: var(--text-muted);
+  margin-left: 4px;
+}
+.attach-chip .x:hover { color: var(--error); }
+.input-box {
+  display: flex;
+  gap: 10px;
+  align-items: flex-end;
+}
+.input-box textarea {
+  flex: 1;
+  min-height: 46px;
+  max-height: 180px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-card);
+  color: var(--text-primary);
+  resize: none;
+  outline: none;
+  font-size: 14px;
+  line-height: 1.5;
+}
+.input-box textarea:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-glow);
+}
+.input-actions {
+  display: flex;
+  gap: 6px;
+  flex-direction: column;
+}
+.input-btn {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  width: 46px;
+  height: 46px;
+  border-radius: 10px;
+  cursor: pointer;
+  font-size: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.input-btn:hover { border-color: var(--accent); color: var(--text-primary); }
+.send-btn {
+  background: var(--gradient);
+  border: none;
+  color: #fff;
+  padding: 0 18px;
+  min-width: 80px;
+  height: 46px;
+  border-radius: 10px;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+}
+.send-btn:hover { box-shadow: var(--shadow-glow); }
+.send-btn:disabled { opacity: 0.5; cursor: wait; }
+.input-hint {
+  color: var(--text-muted);
+  font-size: 11px;
+  text-align: center;
+  margin-top: 6px;
+}
+.input-hint kbd { background: var(--bg-elevated); padding: 1px 5px; border-radius: 3px; font-family: monospace; font-size: 10px; }
+</style>
+</head>
+<body>
+
+<!-- ═══════════════════════ 登录页 ═══════════════════════ -->
+<div id="login-page" class="login-page">
+  <div class="login-card">
+    <div class="login-brand">⚡ 15code</div>
+    <div class="login-sub">统一 Claude / GPT / GLM 接入</div>
+    <form class="login-form" onsubmit="return doLogin(event)">
+      <label>邮箱</label>
+      <input id="login-email" type="email" required autocomplete="email" placeholder="you@example.com"/>
+      <label>密码</label>
+      <input id="login-password" type="password" required autocomplete="current-password" placeholder="••••••••"/>
+      <button type="submit" class="login-btn" id="login-btn">登录</button>
+    </form>
+    <div class="login-err" id="login-err" style="display:none"></div>
+    <div class="login-links">
+      <a onclick="openLink('https://15code.com/login?mode=register')">注册账号</a>
+      ·
+      <a onclick="openLink('https://15code.com/forgot-password')">忘记密码？</a>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════ 主界面 ═══════════════════════ -->
+<div id="app" class="app" style="display:none">
+  <!-- 顶部 -->
+  <div class="topbar">
+    <div style="display:flex;align-items:center;gap:10px">
+      <div class="brand">⚡ 15code</div>
+      <button class="menu-btn" onclick="newChat()" title="新建对话 (Ctrl+N)">+ 新建</button>
+    </div>
+    <div class="topbar-right">
+      <select class="model-pick" id="model-pick"></select>
+      <div class="balance" id="balance-box">加载中...</div>
+      <button class="menu-btn" onclick="exportChat()" title="导出对话 (Ctrl+S)">⬇ 导出</button>
+      <button class="menu-btn" onclick="logout()" title="登出">↗ 登出</button>
+    </div>
+  </div>
+
+  <!-- 聊天消息 -->
+  <div class="chat-area" id="chat-area">
+    <div class="messages" id="messages">
+      <div class="hero-empty" id="hero-empty">
+        <h2>👋 欢迎使用 15code</h2>
+        <p>输入问题或拖入文件开始对话</p>
+        <p style="font-size:13px;margin-top:8px">当前模型：<b id="hero-model">加载中...</b></p>
+      </div>
+    </div>
+  </div>
+
+  <!-- 输入区 -->
+  <div class="input-area">
+    <div class="input-wrap">
+      <div class="attachments" id="attachments"></div>
+      <div class="input-box">
+        <textarea id="input" placeholder="问点什么... (Ctrl+Enter 发送)" rows="1"></textarea>
+        <div class="input-actions">
+          <button class="input-btn" onclick="openFileMenu()" title="附加文件 (Ctrl+O)">📎</button>
+        </div>
+        <button class="send-btn" id="send-btn" onclick="sendMessage()">发送 →</button>
+      </div>
+      <div class="input-hint">
+        <kbd>Ctrl+Enter</kbd> 发送 · <kbd>Ctrl+N</kbd> 新对话 · <kbd>Ctrl+O</kbd> 导入文件 · <kbd>Ctrl+S</kbd> 导出
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ═══════════════════════ 全局状态 ═══════════════════════
+const PLATFORM = 'https://new.15code.com';
+const LLM = 'https://claude.15code.com';
+
+const state = {
+  user: null,
+  apiKey: null,        // go_key for calling LLM
+  models: [],          // from /api/pricing
+  currentModel: null,
+  messages: [],        // [{role, content}]
+  attachments: [],     // [{name, content}]
+  streaming: false,
+};
+
+// ═══════════════════════ 工具 ═══════════════════════
+function openLink(url) {
+  if (window.desktop) window.desktop.openExternal(url);
+  else window.open(url, '_blank');
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// 极简 markdown → HTML（代码块 / 粗体 / 行内代码 / 换行）
+function mdToHtml(md) {
+  let h = escapeHtml(md);
+  // 三反引号代码块
+  h = h.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) =>
+    `<pre><code class="lang-${lang}">${code.replace(/&/g,'&amp;').replace(/</g,'&lt;')}</code></pre>`);
+  // 行内代码
+  h = h.replace(/`([^`]+)`/g, '<code>$1</code>');
+  // 粗体
+  h = h.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+  // 斜体
+  h = h.replace(/\*([^*\n]+)\*/g, '<em>$1</em>');
+  // 标题
+  h = h.replace(/^### (.+)$/gm, '<h3>$1</h3>');
+  h = h.replace(/^## (.+)$/gm, '<h2>$1</h2>');
+  h = h.replace(/^# (.+)$/gm, '<h1>$1</h1>');
+  return h;
+}
+
+async function fetchJson(url, opts = {}) {
+  opts.credentials = 'include';
+  opts.headers = { 'Content-Type': 'application/json', ...(opts.headers || {}) };
+  const r = await fetch(url, opts);
+  const text = await r.text();
+  let data;
+  try { data = JSON.parse(text); } catch { data = { raw: text }; }
+  if (!r.ok) throw new Error(data.error || data.detail || text || r.statusText);
+  return data;
+}
+
+// ═══════════════════════ 登录 ═══════════════════════
+async function doLogin(e) {
+  e.preventDefault();
+  const email = document.getElementById('login-email').value.trim();
+  const password = document.getElementById('login-password').value;
+  const btn = document.getElementById('login-btn');
+  const err = document.getElementById('login-err');
+  err.style.display = 'none';
+  btn.disabled = true;
+  btn.textContent = '登录中...';
+
+  try {
+    await fetchJson(PLATFORM + '/api/login', {
+      method: 'POST',
+      body: JSON.stringify({ email, password }),
+    });
+
+    // 登录后同时拿：用户信息、余额、可用 API tokens
+    const me = await fetchJson(PLATFORM + '/api/me');
+    state.user = me.user;
+
+    // 确保有一个可用的 go_key
+    let tokens = await fetchJson(PLATFORM + '/api/tokens');
+    tokens = tokens.tokens || [];
+    let active = tokens.find(t => t.status === 'active' && t.go_key);
+    if (!active) {
+      const created = await fetchJson(PLATFORM + '/api/tokens', {
+        method: 'POST',
+        body: JSON.stringify({ name: '15code Desktop', withGoKey: true }),
+      });
+      state.apiKey = created.goKey;
+    } else {
+      state.apiKey = active.go_key;
+    }
+
+    // 拉模型列表
+    const pricing = await fetchJson(PLATFORM + '/api/pricing');
+    state.models = pricing.models || [];
+
+    showApp();
+  } catch (e) {
+    err.textContent = '登录失败：' + e.message;
+    err.style.display = 'block';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '登录';
+  }
+  return false;
+}
+
+function logout() {
+  fetch(PLATFORM + '/api/logout', { method: 'POST', credentials: 'include' }).finally(() => {
+    state.user = null;
+    state.apiKey = null;
+    state.messages = [];
+    state.attachments = [];
+    document.getElementById('app').style.display = 'none';
+    document.getElementById('login-page').style.display = 'flex';
+  });
+}
+
+// ═══════════════════════ 显示主界面 ═══════════════════════
+function showApp() {
+  document.getElementById('login-page').style.display = 'none';
+  document.getElementById('app').style.display = 'flex';
+  document.getElementById('input').focus();
+
+  // 填充模型下拉
+  const sel = document.getElementById('model-pick');
+  sel.innerHTML = '';
+  const groups = {};
+  for (const m of state.models) {
+    const family = m.modelId?.startsWith('claude') ? 'Claude' :
+                   m.modelId?.startsWith('glm') ? 'GLM' :
+                   m.modelId?.startsWith('gpt') || m.modelId?.startsWith('codex') ? 'GPT / Codex' : '其他';
+    if (!groups[family]) groups[family] = [];
+    groups[family].push(m);
+  }
+  for (const [g, ms] of Object.entries(groups)) {
+    const og = document.createElement('optgroup');
+    og.label = g;
+    for (const m of ms) {
+      const op = document.createElement('option');
+      op.value = m.modelId;
+      op.textContent = m.displayName;
+      og.appendChild(op);
+    }
+    sel.appendChild(og);
+  }
+  // 默认选第一个
+  if (state.models.length) {
+    const saved = localStorage.getItem('15code:model') || state.models[0].modelId;
+    sel.value = saved;
+    state.currentModel = sel.value;
+  }
+  sel.onchange = () => {
+    state.currentModel = sel.value;
+    localStorage.setItem('15code:model', sel.value);
+    document.getElementById('hero-model').textContent = getModelName(sel.value);
+  };
+  document.getElementById('hero-model').textContent = getModelName(state.currentModel);
+
+  refreshBalance();
+  setInterval(refreshBalance, 30000);  // 30s 刷余额
+}
+
+function getModelName(id) {
+  const m = state.models.find(x => x.modelId === id);
+  return m ? m.displayName : id;
+}
+
+async function refreshBalance() {
+  try {
+    const me = await fetchJson(PLATFORM + '/api/me');
+    const credits = Number(me.user?.credits || 0) / 1_000_000;
+    const box = document.getElementById('balance-box');
+    box.innerHTML = '余额 <b>$' + credits.toFixed(2) + '</b>';
+    if (credits < 1) box.style.color = 'var(--warn)';
+  } catch (e) {
+    console.warn('refreshBalance fail', e);
+  }
+}
+
+// ═══════════════════════ 聊天 ═══════════════════════
+function newChat() {
+  state.messages = [];
+  state.attachments = [];
+  renderMessages();
+  renderAttachments();
+  document.getElementById('input').value = '';
+  document.getElementById('input').focus();
+}
+
+function renderMessages() {
+  const box = document.getElementById('messages');
+  const empty = document.getElementById('hero-empty');
+  if (state.messages.length === 0) {
+    empty.style.display = 'block';
+    box.innerHTML = '';
+    box.appendChild(empty);
+    return;
+  }
+  empty.style.display = 'none';
+  box.innerHTML = '';
+  state.messages.forEach((m, i) => {
+    const el = document.createElement('div');
+    el.className = 'msg ' + m.role;
+    const roleIcon = m.role === 'user' ? '👤 <b>你</b>' : '🤖 <b>' + getModelName(state.currentModel) + '</b>';
+    el.innerHTML = `
+      <div class="msg-role ${m.role}">${roleIcon}</div>
+      <div class="msg-body">${mdToHtml(m.content)}</div>
+      <div class="msg-actions">
+        <button onclick="copyMsg(${i})">复制</button>
+        ${m.role === 'user' ? '' : `<button onclick="regenMsg(${i})">重新生成</button>`}
+      </div>
+    `;
+    box.appendChild(el);
+  });
+  // scroll
+  const area = document.getElementById('chat-area');
+  area.scrollTop = area.scrollHeight;
+}
+
+function copyMsg(i) {
+  navigator.clipboard.writeText(state.messages[i].content);
+}
+
+function regenMsg(i) {
+  // 删除 i 之后的所有消息，重发
+  state.messages = state.messages.slice(0, i);
+  renderMessages();
+  sendToAssistant();
+}
+
+async function sendMessage() {
+  const input = document.getElementById('input');
+  const text = input.value.trim();
+  if (!text && state.attachments.length === 0) return;
+  if (state.streaming) return;
+
+  // 组装用户消息（附件拼接）
+  let userContent = text;
+  if (state.attachments.length > 0) {
+    const attachText = state.attachments.map(a =>
+      `\n\n---\n**附件 ${a.name}**:\n\`\`\`\n${a.content}\n\`\`\``
+    ).join('');
+    userContent = (text || '请分析以下内容') + attachText;
+  }
+
+  state.messages.push({ role: 'user', content: userContent });
+  state.attachments = [];
+  renderAttachments();
+  input.value = '';
+  input.style.height = 'auto';
+  renderMessages();
+
+  await sendToAssistant();
+}
+
+async function sendToAssistant() {
+  state.streaming = true;
+  const btn = document.getElementById('send-btn');
+  btn.disabled = true;
+  btn.textContent = '...';
+
+  // 占位消息
+  state.messages.push({ role: 'assistant', content: '' });
+  const idx = state.messages.length - 1;
+  renderMessages();
+
+  try {
+    const resp = await fetch(LLM + '/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ' + state.apiKey,
+      },
+      body: JSON.stringify({
+        model: state.currentModel,
+        messages: state.messages.slice(0, -1).map(m => ({ role: m.role, content: m.content })),
+        stream: true,
+      }),
+    });
+
+    if (!resp.ok) {
+      const txt = await resp.text();
+      throw new Error('HTTP ' + resp.status + ': ' + txt.slice(0, 200));
+    }
+
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder('utf-8');
+    let buf = '';
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const lines = buf.split('\n');
+      buf = lines.pop();
+      for (const line of lines) {
+        if (!line.startsWith('data:')) continue;
+        const data = line.slice(5).trim();
+        if (data === '[DONE]') continue;
+        try {
+          const chunk = JSON.parse(data);
+          const delta = chunk.choices?.[0]?.delta?.content || '';
+          if (delta) {
+            state.messages[idx].content += delta;
+            // 轻量刷新（避免全量重绘）
+            const last = document.querySelectorAll('#messages .msg').item(idx);
+            if (last) last.querySelector('.msg-body').innerHTML = mdToHtml(state.messages[idx].content);
+            const area = document.getElementById('chat-area');
+            area.scrollTop = area.scrollHeight;
+          }
+        } catch {}
+      }
+    }
+  } catch (e) {
+    state.messages[idx].content = '❌ 出错了：' + e.message;
+    renderMessages();
+  } finally {
+    state.streaming = false;
+    btn.disabled = false;
+    btn.textContent = '发送 →';
+    refreshBalance();  // 聊天后立即刷新余额
+    document.getElementById('input').focus();
+  }
+}
+
+// ═══════════════════════ 附件 ═══════════════════════
+function renderAttachments() {
+  const box = document.getElementById('attachments');
+  box.innerHTML = '';
+  state.attachments.forEach((a, i) => {
+    const chip = document.createElement('span');
+    chip.className = 'attach-chip';
+    chip.innerHTML = `📎 ${escapeHtml(a.name)} <span class="x" onclick="removeAttachment(${i})">×</span>`;
+    box.appendChild(chip);
+  });
+}
+function removeAttachment(i) {
+  state.attachments.splice(i, 1);
+  renderAttachments();
+}
+function addAttachment(name, content) {
+  // 截断过长
+  const max = 50000;
+  if (content.length > max) content = content.slice(0, max) + '\n\n...(文件太长，已截断到前 5 万字符)';
+  state.attachments.push({ name, content });
+  renderAttachments();
+}
+
+function openFileMenu() {
+  // 用 <input type=file> 触发
+  const inp = document.createElement('input');
+  inp.type = 'file';
+  inp.multiple = true;
+  inp.accept = '.txt,.md,.json,.csv,.py,.js,.ts,.go,.rs,.java,.html,.css,.log,.xml,.yml,.yaml,.sh,.sql,.c,.cpp,.h';
+  inp.onchange = async (e) => {
+    for (const f of e.target.files) {
+      const text = await f.text();
+      addAttachment(f.name, text);
+    }
+  };
+  inp.click();
+}
+
+// 拖拽上传
+document.addEventListener('dragover', e => { e.preventDefault(); });
+document.addEventListener('drop', async e => {
+  e.preventDefault();
+  for (const f of e.dataTransfer.files) {
+    try { addAttachment(f.name, await f.text()); } catch {}
+  }
+});
+
+// ═══════════════════════ 导出 ═══════════════════════
+async function exportChat() {
+  if (state.messages.length === 0) return alert('当前没有对话内容');
+  const lines = state.messages.map(m => {
+    const role = m.role === 'user' ? '## 👤 你' : '## 🤖 ' + getModelName(state.currentModel);
+    return `${role}\n\n${m.content}\n`;
+  });
+  const content = `# 15code 对话记录\n\n导出时间: ${new Date().toLocaleString()}\n模型: ${getModelName(state.currentModel)}\n\n---\n\n` + lines.join('\n---\n\n');
+  if (window.desktop) {
+    await window.desktop.saveFile({
+      content,
+      defaultName: '15code-chat-' + new Date().toISOString().slice(0,16).replace(/[:T]/g,'-') + '.md',
+    });
+  } else {
+    // 浏览器 fallback
+    const blob = new Blob([content], { type: 'text/markdown' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = '15code-chat.md';
+    a.click();
+  }
+}
+
+// ═══════════════════════ 快捷键 / 初始化 ═══════════════════════
+document.addEventListener('keydown', e => {
+  const c = e.ctrlKey || e.metaKey;
+  if (c && e.key === 'Enter') { sendMessage(); e.preventDefault(); }
+  if (c && e.key === 'n') { newChat(); e.preventDefault(); }
+  if (c && e.key === 's') { exportChat(); e.preventDefault(); }
+  if (c && e.key === 'o') { openFileMenu(); e.preventDefault(); }
+});
+
+// textarea 自动高度
+document.getElementById('input').addEventListener('input', function() {
+  this.style.height = 'auto';
+  this.style.height = Math.min(this.scrollHeight, 180) + 'px';
+});
+
+// Electron 菜单事件
+if (window.desktop) {
+  window.desktop.onMenu('new-chat', () => newChat());
+  window.desktop.onMenu('file-loaded', ({ name, content }) => addAttachment(name, content));
+  window.desktop.onMenu('export', () => exportChat());
+}
+
+// 启动时尝试恢复会话（看 cookie 是否还有效）
+(async function bootstrap() {
+  try {
+    const me = await fetchJson(PLATFORM + '/api/me');
+    if (me.user && me.user.email) {
+      state.user = me.user;
+      let tokens = await fetchJson(PLATFORM + '/api/tokens');
+      tokens = tokens.tokens || [];
+      let active = tokens.find(t => t.status === 'active' && t.go_key);
+      if (!active) {
+        const c = await fetchJson(PLATFORM + '/api/tokens', {
+          method: 'POST', body: JSON.stringify({ name: '15code Desktop', withGoKey: true }),
+        });
+        state.apiKey = c.goKey;
+      } else {
+        state.apiKey = active.go_key;
+      }
+      const pricing = await fetchJson(PLATFORM + '/api/pricing');
+      state.models = pricing.models || [];
+      showApp();
+    }
+  } catch (e) {
+    // 未登录，留在登录页
+  }
+})();
+</script>
+</body>
+</html>
