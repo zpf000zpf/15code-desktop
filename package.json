@@ -1,6 +1,6 @@
 {
   "name": "15code-desktop",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "15code 桌面客户端 — 统一 Claude / GPT / GLM 接入",
   "main": "src/main.js",
   "author": "15code <dev@15code.com>",

@@ -453,9 +453,11 @@ button, input, select, textarea {
 const PLATFORM = 'https://15code.com';
 const LLM = 'https://claude.15code.com';
 
+const SESSION_KEY = '15code:session';
 const state = {
   user: null,
   apiKey: null,        // go_key for calling LLM
+  sessionToken: localStorage.getItem(SESSION_KEY) || null, // JWT for /api/* (Bearer)
   models: [],          // from /api/pricing
   currentModel: null,
   messages: [],        // [{role, content}]
@@ -493,8 +495,12 @@ function mdToHtml(md) {
 }
 
 async function fetchJson(url, opts = {}) {
-  opts.credentials = 'include';
+  // Electron 渲染进程是 file:// 协议，对 https://15code.com 是跨站请求，
+  // SameSite=Lax 的 cookie 不会被带上。改用 Bearer token 走 Authorization 头。
   opts.headers = { 'Content-Type': 'application/json', ...(opts.headers || {}) };
+  if (state.sessionToken && !opts.headers.Authorization) {
+    opts.headers.Authorization = 'Bearer ' + state.sessionToken;
+  }
   const r = await fetch(url, opts);
   const text = await r.text();
   let data;
@@ -515,10 +521,16 @@ async function doLogin(e) {
   btn.textContent = '登录中...';
 
   try {
-    await fetchJson(PLATFORM + '/api/auth/login', {
+    const loginResp = await fetchJson(PLATFORM + '/api/auth/login', {
       method: 'POST',
+      headers: { 'X-Auth-Mode': 'bearer' },
       body: JSON.stringify({ email, password }),
     });
+    if (!loginResp.sessionToken) {
+      throw new Error('服务端未返回 sessionToken（请确认服务端已升级到支持 X-Auth-Mode: bearer）');
+    }
+    state.sessionToken = loginResp.sessionToken;
+    localStorage.setItem(SESSION_KEY, state.sessionToken);
 
     // 登录后同时拿：用户信息、余额、可用 API tokens
     const me = await fetchJson(PLATFORM + '/api/me');
@@ -554,11 +566,14 @@ async function doLogin(e) {
 }
 
 function logout() {
-  fetch(PLATFORM + '/api/auth/logout', { method: 'POST', credentials: 'include' }).finally(() => {
+  const headers = state.sessionToken ? { 'Authorization': 'Bearer ' + state.sessionToken } : {};
+  fetch(PLATFORM + '/api/auth/logout', { method: 'POST', headers }).finally(() => {
     state.user = null;
     state.apiKey = null;
+    state.sessionToken = null;
     state.messages = [];
     state.attachments = [];
+    localStorage.removeItem(SESSION_KEY);
     document.getElementById('app').style.display = 'none';
     document.getElementById('login-page').style.display = 'flex';
   });
@@ -863,8 +878,9 @@ if (window.desktop) {
   window.desktop.onMenu('export', () => exportChat());
 }
 
-// 启动时尝试恢复会话（看 cookie 是否还有效）
+// 启动时尝试恢复会话（用 localStorage 里的 sessionToken）
 (async function bootstrap() {
+  if (!state.sessionToken) return; // 没保存过 token，留在登录页
   try {
     const me = await fetchJson(PLATFORM + '/api/me');
     if (me.user && me.user.email) {
@@ -885,7 +901,9 @@ if (window.desktop) {
       showApp();
     }
   } catch (e) {
-    // 未登录，留在登录页
+    // token 失效或网络错误：清掉本地 token，停在登录页
+    state.sessionToken = null;
+    localStorage.removeItem(SESSION_KEY);
   }
 })();
 </script>
