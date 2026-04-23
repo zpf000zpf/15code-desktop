@@ -450,7 +450,7 @@ button, input, select, textarea {
 
 <script>
 // ═══════════════════════ 全局状态 ═══════════════════════
-const PLATFORM = 'https://new.15code.com';
+const PLATFORM = 'https://15code.com';
 const LLM = 'https://claude.15code.com';
 
 const state = {
@@ -515,7 +515,7 @@ async function doLogin(e) {
   btn.textContent = '登录中...';
 
   try {
-    await fetchJson(PLATFORM + '/api/login', {
+    await fetchJson(PLATFORM + '/api/auth/login', {
       method: 'POST',
       body: JSON.stringify({ email, password }),
     });
@@ -554,7 +554,7 @@ async function doLogin(e) {
 }
 
 function logout() {
-  fetch(PLATFORM + '/api/logout', { method: 'POST', credentials: 'include' }).finally(() => {
+  fetch(PLATFORM + '/api/auth/logout', { method: 'POST', credentials: 'include' }).finally(() => {
     state.user = null;
     state.apiKey = null;
     state.messages = [];
