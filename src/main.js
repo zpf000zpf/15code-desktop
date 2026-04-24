@@ -13,7 +13,7 @@ function writeChatLog(message) {
   } catch {}
 }
 
-const LLM_HOST = 'claude.15code.com';
+const LLM_HOST = 'cli.15code.com';
 
 function sendChatCompletion(event, { requestId, apiKey, model, messages }) {
   return new Promise((resolve, reject) => {
