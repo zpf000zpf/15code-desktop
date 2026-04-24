@@ -4,6 +4,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('desktop', {
   saveFile: (data) => ipcRenderer.invoke('save-file', data),
   openExternal: (url) => ipcRenderer.invoke('open-external', url),
+  getAppInfo: () => ipcRenderer.invoke('get-app-info'),
   chatCompletion: (data) => ipcRenderer.invoke('chat-completion', data),
   onChatStream: (requestId, handler) => {
     const channel = 'chat-stream:' + requestId;

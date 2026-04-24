@@ -4,6 +4,15 @@ const path = require('path');
 const fs = require('fs');
 const https = require('https');
 
+let chatLogPath = null;
+
+function writeChatLog(message) {
+  try {
+    if (!chatLogPath) chatLogPath = path.join(app.getPath('userData'), 'chat-debug.log');
+    fs.appendFileSync(chatLogPath, `[${new Date().toISOString()}] ${message}\n`, 'utf8');
+  } catch {}
+}
+
 const LLM_HOST = 'claude.15code.com';
 
 function sendChatCompletion(event, { requestId, apiKey, model, messages }) {
@@ -13,6 +22,7 @@ function sendChatCompletion(event, { requestId, apiKey, model, messages }) {
       return;
     }
 
+    writeChatLog(`start requestId=${requestId} model=${model} messages=${messages.length} apiKey=${apiKey ? 'set' : 'missing'}`);
     const body = JSON.stringify({ model, messages, stream: true });
     const req = https.request({
       hostname: LLM_HOST,
@@ -26,8 +36,11 @@ function sendChatCompletion(event, { requestId, apiKey, model, messages }) {
         'User-Agent': `15code-desktop/${app.getVersion()} Electron/${process.versions.electron}`,
       },
     }, (res) => {
+      writeChatLog(`response requestId=${requestId} status=${res.statusCode}`);
       let raw = '';
       let sseBuffer = '';
+      let deltaCount = 0;
+      let fallbackJson = '';
 
       res.setEncoding('utf8');
       res.on('data', (chunk) => {
@@ -36,6 +49,7 @@ function sendChatCompletion(event, { requestId, apiKey, model, messages }) {
           return;
         }
 
+        fallbackJson += chunk;
         sseBuffer += chunk;
         const lines = sseBuffer.split('\n');
         sseBuffer = lines.pop() || '';
@@ -49,6 +63,7 @@ function sendChatCompletion(event, { requestId, apiKey, model, messages }) {
             const parsed = JSON.parse(data);
             const delta = parsed.choices?.[0]?.delta?.content || '';
             if (delta) {
+              deltaCount += 1;
               event.sender.send('chat-stream:' + requestId, { type: 'delta', delta });
             }
           } catch {}
@@ -60,16 +75,31 @@ function sendChatCompletion(event, { requestId, apiKey, model, messages }) {
           reject(new Error('HTTP ' + res.statusCode + ': ' + raw.slice(0, 300)));
           return;
         }
+        if (deltaCount === 0 && fallbackJson.trim().startsWith('{')) {
+          try {
+            const parsed = JSON.parse(fallbackJson);
+            const content = parsed.choices?.[0]?.message?.content || parsed.choices?.[0]?.delta?.content || '';
+            if (content) {
+              deltaCount = 1;
+              event.sender.send('chat-stream:' + requestId, { type: 'delta', delta: content });
+            }
+          } catch {}
+        }
+        writeChatLog(`end requestId=${requestId} status=${res.statusCode} deltas=${deltaCount}`);
         event.sender.send('chat-stream:' + requestId, { type: 'done' });
-        resolve({ ok: true });
+        resolve({ ok: true, deltas: deltaCount });
       });
     });
 
     req.setTimeout(120000, () => {
+      writeChatLog(`timeout requestId=${requestId}`);
       req.destroy(new Error('请求超时，请稍后重试'));
     });
 
-    req.on('error', reject);
+    req.on('error', (err) => {
+      writeChatLog(`error requestId=${requestId} ${err.message}`);
+      reject(err);
+    });
     req.write(body);
     req.end();
   });
@@ -209,6 +239,11 @@ ipcMain.handle('save-file', async (_e, { content, defaultName }) => {
 
 // 打开外部链接
 ipcMain.handle('open-external', (_e, url) => shell.openExternal(url));
+
+ipcMain.handle('get-app-info', () => {
+  if (!chatLogPath) chatLogPath = path.join(app.getPath('userData'), 'chat-debug.log');
+  return { version: app.getVersion(), chatLogPath };
+});
 
 ipcMain.handle('chat-completion', sendChatCompletion);
 

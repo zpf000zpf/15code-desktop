@@ -408,7 +408,7 @@ button, input, select, textarea {
   <!-- 顶部 -->
   <div class="topbar">
     <div style="display:flex;align-items:center;gap:10px">
-      <div class="brand">⚡ 15code</div>
+      <div class="brand">⚡ 15code <span id="app-version" style="font-size:12px;color:var(--muted);font-weight:500"></span></div>
       <button class="menu-btn" onclick="newChat()" title="新建对话 (Ctrl+N)">+ 新建</button>
     </div>
     <div class="topbar-right">
@@ -745,6 +745,7 @@ async function sendToAssistant() {
       const requestId = Date.now().toString(36) + Math.random().toString(36).slice(2);
       const off = window.desktop.onChatStream(requestId, (event) => {
         if (event.type !== 'delta' || !event.delta) return;
+        if (!state.messages[idx].content) { state.messages[idx].content = ''; }
         state.messages[idx].content += event.delta;
         const last = document.querySelectorAll('#messages .msg').item(idx);
         if (last) last.querySelector('.msg-body').innerHTML = mdToHtml(state.messages[idx].content);
@@ -753,6 +754,8 @@ async function sendToAssistant() {
       });
 
       try {
+        const last = document.querySelectorAll('#messages .msg').item(idx);
+        if (last) last.querySelector('.msg-body').innerHTML = '<span style=\"color:var(--muted)\">已连接，等待模型返回...</span>';
         await window.desktop.chatCompletion({
           requestId,
           apiKey: state.apiKey,
@@ -911,6 +914,17 @@ if (window.desktop) {
   window.desktop.onMenu('file-loaded', ({ name, content }) => addAttachment(name, content));
   window.desktop.onMenu('export', () => exportChat());
 }
+
+
+(async function showDesktopVersion() {
+  try {
+    if (!window.desktop?.getAppInfo) return;
+    const info = await window.desktop.getAppInfo();
+    const el = document.getElementById('app-version');
+    if (el && info.version) el.textContent = 'v' + info.version;
+    window.__chatLogPath = info.chatLogPath;
+  } catch (e) {}
+})();
 
 // 启动时尝试恢复会话（用 localStorage 里的 sessionToken）
 (async function bootstrap() {
