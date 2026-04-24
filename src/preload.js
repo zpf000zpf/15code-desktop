@@ -4,6 +4,13 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('desktop', {
   saveFile: (data) => ipcRenderer.invoke('save-file', data),
   openExternal: (url) => ipcRenderer.invoke('open-external', url),
+  chatCompletion: (data) => ipcRenderer.invoke('chat-completion', data),
+  onChatStream: (requestId, handler) => {
+    const channel = 'chat-stream:' + requestId;
+    const listener = (_e, payload) => handler(payload);
+    ipcRenderer.on(channel, listener);
+    return () => ipcRenderer.removeListener(channel, listener);
+  },
   onMenu: (event, handler) => {
     ipcRenderer.on('menu:' + event, (_e, payload) => handler(payload));
   },

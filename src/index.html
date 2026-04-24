@@ -729,6 +729,41 @@ async function sendToAssistant() {
   renderMessages();
 
   try {
+    if (!state.apiKey) {
+      throw new Error('未找到可用 API Key，请退出后重新登录');
+    }
+    if (!state.currentModel) {
+      throw new Error('请先选择模型');
+    }
+
+    const payload = {
+      model: state.currentModel,
+      messages: state.messages.slice(0, -1).map(m => ({ role: m.role, content: m.content })),
+    };
+
+    if (window.desktop?.chatCompletion && window.desktop?.onChatStream) {
+      const requestId = Date.now().toString(36) + Math.random().toString(36).slice(2);
+      const off = window.desktop.onChatStream(requestId, (event) => {
+        if (event.type !== 'delta' || !event.delta) return;
+        state.messages[idx].content += event.delta;
+        const last = document.querySelectorAll('#messages .msg').item(idx);
+        if (last) last.querySelector('.msg-body').innerHTML = mdToHtml(state.messages[idx].content);
+        const area = document.getElementById('chat-area');
+        area.scrollTop = area.scrollHeight;
+      });
+
+      try {
+        await window.desktop.chatCompletion({
+          requestId,
+          apiKey: state.apiKey,
+          ...payload,
+        });
+      } finally {
+        off();
+      }
+      return;
+    }
+
     const resp = await fetch(LLM + '/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -736,8 +771,7 @@ async function sendToAssistant() {
         'Authorization': 'Bearer ' + state.apiKey,
       },
       body: JSON.stringify({
-        model: state.currentModel,
-        messages: state.messages.slice(0, -1).map(m => ({ role: m.role, content: m.content })),
+        ...payload,
         stream: true,
       }),
     });

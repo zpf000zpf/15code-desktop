@@ -2,6 +2,78 @@
 const { app, BrowserWindow, Menu, shell, dialog, ipcMain } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const https = require('https');
+
+const LLM_HOST = 'claude.15code.com';
+
+function sendChatCompletion(event, { requestId, apiKey, model, messages }) {
+  return new Promise((resolve, reject) => {
+    if (!requestId || !apiKey || !model || !Array.isArray(messages)) {
+      reject(new Error('聊天参数不完整，请重新登录后再试'));
+      return;
+    }
+
+    const body = JSON.stringify({ model, messages, stream: true });
+    const req = https.request({
+      hostname: LLM_HOST,
+      port: 443,
+      path: '/v1/chat/completions',
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(body),
+        'Authorization': 'Bearer ' + apiKey,
+        'User-Agent': `15code-desktop/${app.getVersion()} Electron/${process.versions.electron}`,
+      },
+    }, (res) => {
+      let raw = '';
+      let sseBuffer = '';
+
+      res.setEncoding('utf8');
+      res.on('data', (chunk) => {
+        if (res.statusCode < 200 || res.statusCode >= 300) {
+          raw += chunk;
+          return;
+        }
+
+        sseBuffer += chunk;
+        const lines = sseBuffer.split('\n');
+        sseBuffer = lines.pop() || '';
+
+        for (const line of lines) {
+          if (!line.startsWith('data:')) continue;
+          const data = line.slice(5).trim();
+          if (!data || data === '[DONE]') continue;
+
+          try {
+            const parsed = JSON.parse(data);
+            const delta = parsed.choices?.[0]?.delta?.content || '';
+            if (delta) {
+              event.sender.send('chat-stream:' + requestId, { type: 'delta', delta });
+            }
+          } catch {}
+        }
+      });
+
+      res.on('end', () => {
+        if (res.statusCode < 200 || res.statusCode >= 300) {
+          reject(new Error('HTTP ' + res.statusCode + ': ' + raw.slice(0, 300)));
+          return;
+        }
+        event.sender.send('chat-stream:' + requestId, { type: 'done' });
+        resolve({ ok: true });
+      });
+    });
+
+    req.setTimeout(120000, () => {
+      req.destroy(new Error('请求超时，请稍后重试'));
+    });
+
+    req.on('error', reject);
+    req.write(body);
+    req.end();
+  });
+}
 
 function createWindow() {
   const win = new BrowserWindow({
@@ -137,6 +209,8 @@ ipcMain.handle('save-file', async (_e, { content, defaultName }) => {
 
 // 打开外部链接
 ipcMain.handle('open-external', (_e, url) => shell.openExternal(url));
+
+ipcMain.handle('chat-completion', sendChatCompletion);
 
 app.whenReady().then(createWindow);
 
