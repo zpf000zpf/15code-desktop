@@ -22,8 +22,10 @@ function sendChatCompletion(event, { requestId, apiKey, model, messages }) {
       return;
     }
 
-    writeChatLog(`start requestId=${requestId} model=${model} messages=${messages.length} apiKey=${apiKey ? 'set' : 'missing'}`);
-    const body = JSON.stringify({ model, messages, stream: true });
+    writeChatLog(`start requestId=${requestId} model=${model} messages=${messages.length} apiKey=${apiKey ? 'set' : 'missing'} mode=non-stream`);
+    const body = JSON.stringify({ model, messages, stream: false });
+    let completed = false;
+
     const req = https.request({
       hostname: LLM_HOST,
       port: 443,
@@ -38,68 +40,53 @@ function sendChatCompletion(event, { requestId, apiKey, model, messages }) {
     }, (res) => {
       writeChatLog(`response requestId=${requestId} status=${res.statusCode}`);
       let raw = '';
-      let sseBuffer = '';
-      let deltaCount = 0;
-      let fallbackJson = '';
 
       res.setEncoding('utf8');
       res.on('data', (chunk) => {
-        if (res.statusCode < 200 || res.statusCode >= 300) {
-          raw += chunk;
-          return;
-        }
-
-        fallbackJson += chunk;
-        sseBuffer += chunk;
-        const lines = sseBuffer.split('\n');
-        sseBuffer = lines.pop() || '';
-
-        for (const line of lines) {
-          if (!line.startsWith('data:')) continue;
-          const data = line.slice(5).trim();
-          if (!data || data === '[DONE]') continue;
-
-          try {
-            const parsed = JSON.parse(data);
-            const delta = parsed.choices?.[0]?.delta?.content || '';
-            if (delta) {
-              deltaCount += 1;
-              event.sender.send('chat-stream:' + requestId, { type: 'delta', delta });
-            }
-          } catch {}
-        }
+        raw += chunk;
       });
 
       res.on('end', () => {
+        completed = true;
         if (res.statusCode < 200 || res.statusCode >= 300) {
-          reject(new Error('HTTP ' + res.statusCode + ': ' + raw.slice(0, 300)));
+          const msg = 'HTTP ' + res.statusCode + ': ' + raw.slice(0, 500);
+          writeChatLog(`end-error requestId=${requestId} ${msg}`);
+          reject(new Error(msg));
           return;
         }
-        if (deltaCount === 0 && fallbackJson.trim().startsWith('{')) {
-          try {
-            const parsed = JSON.parse(fallbackJson);
-            const content = parsed.choices?.[0]?.message?.content || parsed.choices?.[0]?.delta?.content || '';
-            if (content) {
-              deltaCount = 1;
-              event.sender.send('chat-stream:' + requestId, { type: 'delta', delta: content });
-            }
-          } catch {}
+
+        let content = '';
+        try {
+          const parsed = JSON.parse(raw);
+          content = parsed.choices?.[0]?.message?.content || parsed.choices?.[0]?.delta?.content || '';
+        } catch (err) {
+          writeChatLog(`parse-error requestId=${requestId} ${err.message} raw=${raw.slice(0, 120)}`);
         }
-        writeChatLog(`end requestId=${requestId} status=${res.statusCode} deltas=${deltaCount}`);
+
+        if (!content) {
+          const msg = '服务端返回为空，请换一个模型重试';
+          writeChatLog(`empty requestId=${requestId} bytes=${raw.length}`);
+          reject(new Error(msg));
+          return;
+        }
+
+        event.sender.send('chat-stream:' + requestId, { type: 'delta', delta: content });
         event.sender.send('chat-stream:' + requestId, { type: 'done' });
-        resolve({ ok: true, deltas: deltaCount });
+        writeChatLog(`end requestId=${requestId} status=${res.statusCode} bytes=${raw.length} content=${content.length}`);
+        resolve({ ok: true, deltas: 1 });
       });
     });
 
-    req.setTimeout(120000, () => {
-      writeChatLog(`timeout requestId=${requestId}`);
-      req.destroy(new Error('请求超时，请稍后重试'));
+    req.setTimeout(60000, () => {
+      if (!completed) writeChatLog(`timeout requestId=${requestId}`);
+      req.destroy(new Error('请求超过 60 秒无响应，请换 GPT-5.4 或稍后重试'));
     });
 
     req.on('error', (err) => {
       writeChatLog(`error requestId=${requestId} ${err.message}`);
       reject(err);
     });
+
     req.write(body);
     req.end();
   });

@@ -755,7 +755,7 @@ async function sendToAssistant() {
 
       try {
         const last = document.querySelectorAll('#messages .msg').item(idx);
-        if (last) last.querySelector('.msg-body').innerHTML = '<span style=\"color:var(--muted)\">已连接，等待模型返回...</span>';
+        if (last) last.querySelector('.msg-body').innerHTML = '<span style=\"color:var(--muted)\">已发送，等待完整回复...</span>';
         await window.desktop.chatCompletion({
           requestId,
           apiKey: state.apiKey,
