@@ -653,14 +653,17 @@ function newChat() {
 
 function renderMessages() {
   const box = document.getElementById('messages');
-  const empty = document.getElementById('hero-empty');
+  const emptyHtml = `
+    <div class="hero-empty" id="hero-empty">
+      <h2>👋 欢迎使用 15code</h2>
+      <p>输入问题或拖入文件开始对话</p>
+      <p style="font-size:13px;margin-top:8px">当前模型：<b id="hero-model">${escapeHtml(getModelName(state.currentModel) || '加载中...')}</b></p>
+    </div>
+  `;
   if (state.messages.length === 0) {
-    empty.style.display = 'block';
-    box.innerHTML = '';
-    box.appendChild(empty);
+    box.innerHTML = emptyHtml;
     return;
   }
-  empty.style.display = 'none';
   box.innerHTML = '';
   state.messages.forEach((m, i) => {
     const el = document.createElement('div');
