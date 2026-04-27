@@ -3,8 +3,10 @@ const { app, BrowserWindow, Menu, shell, dialog, ipcMain } = require('electron')
 const path = require('path');
 const fs = require('fs');
 const https = require('https');
+const { autoUpdater } = require('electron-updater');
 
 let chatLogPath = null;
+let updateReady = false;
 
 function writeChatLog(message) {
   try {
@@ -14,6 +16,57 @@ function writeChatLog(message) {
 }
 
 const LLM_HOST = 'cli.15code.com';
+
+autoUpdater.autoDownload = true;
+autoUpdater.autoInstallOnAppQuit = true;
+
+function sendUpdateStatus(payload) {
+  for (const win of BrowserWindow.getAllWindows()) {
+    win.webContents.send('update-status', payload);
+  }
+}
+
+function setupAutoUpdater() {
+  autoUpdater.on('checking-for-update', () => {
+    sendUpdateStatus({ type: 'checking', message: '正在检查更新...' });
+  });
+  autoUpdater.on('update-available', (info) => {
+    updateReady = false;
+    sendUpdateStatus({ type: 'available', version: info.version, message: `发现新版本 v${info.version}，正在下载...` });
+  });
+  autoUpdater.on('update-not-available', (info) => {
+    sendUpdateStatus({ type: 'none', version: info.version, message: '当前已是最新版本' });
+  });
+  autoUpdater.on('download-progress', (progress) => {
+    sendUpdateStatus({
+      type: 'downloading',
+      percent: Math.round(progress.percent || 0),
+      message: `正在下载更新 ${Math.round(progress.percent || 0)}%`,
+    });
+  });
+  autoUpdater.on('update-downloaded', (info) => {
+    updateReady = true;
+    sendUpdateStatus({ type: 'downloaded', version: info.version, message: `v${info.version} 已下载，点击安装重启` });
+  });
+  autoUpdater.on('error', (err) => {
+    sendUpdateStatus({ type: 'error', message: err.message || '检查更新失败' });
+  });
+}
+
+async function checkForUpdates(manual = false) {
+  if (!app.isPackaged) {
+    const message = '开发模式不检查更新';
+    if (manual) sendUpdateStatus({ type: 'none', message });
+    return { ok: false, message };
+  }
+  try {
+    const result = await autoUpdater.checkForUpdates();
+    return { ok: true, updateInfo: result?.updateInfo || null };
+  } catch (err) {
+    sendUpdateStatus({ type: 'error', message: err.message || '检查更新失败' });
+    return { ok: false, message: err.message };
+  }
+}
 
 function sendChatCompletion(event, { requestId, apiKey, model, messages }) {
   return new Promise((resolve, reject) => {
@@ -209,6 +262,11 @@ function createWindow() {
         { label: 'GitHub', click: () => shell.openExternal('https://github.com/zpf000zpf/15code-desktop') },
         { type: 'separator' },
         {
+          label: '检查更新',
+          click: () => checkForUpdates(true),
+        },
+        { type: 'separator' },
+        {
           label: '关于 15code',
           click: () => {
             dialog.showMessageBox(win, {
@@ -249,9 +307,21 @@ ipcMain.handle('get-app-info', () => {
   return { version: app.getVersion(), chatLogPath };
 });
 
+ipcMain.handle('check-for-updates', () => checkForUpdates(true));
+
+ipcMain.handle('install-update', () => {
+  if (!updateReady) return { ok: false, message: '更新包尚未下载完成' };
+  autoUpdater.quitAndInstall(false, true);
+  return { ok: true };
+});
+
 ipcMain.handle('chat-completion', sendChatCompletion);
 
-app.whenReady().then(createWindow);
+app.whenReady().then(() => {
+  setupAutoUpdater();
+  createWindow();
+  setTimeout(() => checkForUpdates(false), 3000);
+});
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();

@@ -414,6 +414,7 @@ button, input, select, textarea {
     <div class="topbar-right">
       <select class="model-pick" id="model-pick"></select>
       <div class="balance" id="balance-box">加载中...</div>
+      <button class="menu-btn" id="update-btn" onclick="checkForUpdates()" title="检查更新">检查更新</button>
       <button class="menu-btn" onclick="exportChat()" title="导出对话 (Ctrl+S)">⬇ 导出</button>
       <button class="menu-btn" onclick="logout()" title="登出">↗ 登出</button>
     </div>
@@ -916,6 +917,46 @@ if (window.desktop) {
   window.desktop.onMenu('new-chat', () => newChat());
   window.desktop.onMenu('file-loaded', ({ name, content }) => addAttachment(name, content));
   window.desktop.onMenu('export', () => exportChat());
+  if (window.desktop.onUpdateStatus) {
+    window.desktop.onUpdateStatus((status) => {
+      const btn = document.getElementById('update-btn');
+      if (!btn) return;
+      btn.dataset.updateState = status.type || '';
+      btn.title = status.message || '检查更新';
+      if (status.type === 'checking') {
+        btn.textContent = '检查中...';
+        btn.disabled = true;
+      } else if (status.type === 'available') {
+        btn.textContent = '下载中...';
+        btn.disabled = true;
+      } else if (status.type === 'downloading') {
+        btn.textContent = '更新 ' + (status.percent || 0) + '%';
+        btn.disabled = true;
+      } else if (status.type === 'downloaded') {
+        btn.textContent = '安装更新';
+        btn.disabled = false;
+      } else if (status.type === 'error') {
+        btn.textContent = '更新失败';
+        btn.disabled = false;
+        setTimeout(() => {
+          if (btn.dataset.updateState === 'error') btn.textContent = '检查更新';
+        }, 3500);
+      } else {
+        btn.textContent = '检查更新';
+        btn.disabled = false;
+      }
+    });
+  }
+}
+
+async function checkForUpdates() {
+  const btn = document.getElementById('update-btn');
+  if (btn?.dataset.updateState === 'downloaded') {
+    await window.desktop?.installUpdate?.();
+    return;
+  }
+  if (!window.desktop?.checkForUpdates) return;
+  await window.desktop.checkForUpdates();
 }
 
 

@@ -5,7 +5,14 @@ contextBridge.exposeInMainWorld('desktop', {
   saveFile: (data) => ipcRenderer.invoke('save-file', data),
   openExternal: (url) => ipcRenderer.invoke('open-external', url),
   getAppInfo: () => ipcRenderer.invoke('get-app-info'),
+  checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),
+  installUpdate: () => ipcRenderer.invoke('install-update'),
   chatCompletion: (data) => ipcRenderer.invoke('chat-completion', data),
+  onUpdateStatus: (handler) => {
+    const listener = (_e, payload) => handler(payload);
+    ipcRenderer.on('update-status', listener);
+    return () => ipcRenderer.removeListener('update-status', listener);
+  },
   onChatStream: (requestId, handler) => {
     const channel = 'chat-stream:' + requestId;
     const listener = (_e, payload) => handler(payload);

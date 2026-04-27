@@ -1,6 +1,6 @@
 {
   "name": "15code-desktop",
-  "version": "1.0.8",
+  "version": "1.0.9",
   "description": "15code 桌面客户端 — 统一 Claude / GPT / GLM 接入",
   "main": "src/main.js",
   "author": "15code <dev@15code.com>",
@@ -65,6 +65,13 @@
       "category": "Office",
       "artifactName": "15code-desktop-${version}.${ext}"
     },
-    "publish": null
+    "publish": {
+      "provider": "github",
+      "owner": "zpf000zpf",
+      "repo": "15code-desktop"
+    }
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.3"
   }
 }
