@@ -22,9 +22,10 @@ function sendChatCompletion(event, { requestId, apiKey, model, messages }) {
       return;
     }
 
-    writeChatLog(`start requestId=${requestId} model=${model} messages=${messages.length} apiKey=${apiKey ? 'set' : 'missing'} mode=non-stream`);
-    const body = JSON.stringify({ model, messages, stream: false });
+    writeChatLog(`start requestId=${requestId} model=${model} messages=${messages.length} apiKey=${apiKey ? 'set' : 'missing'} mode=stream`);
+    const body = JSON.stringify({ model, messages, stream: true });
     let completed = false;
+    let contentLength = 0;
 
     const req = https.request({
       hostname: LLM_HOST,
@@ -40,10 +41,33 @@ function sendChatCompletion(event, { requestId, apiKey, model, messages }) {
     }, (res) => {
       writeChatLog(`response requestId=${requestId} status=${res.statusCode}`);
       let raw = '';
+      let buffer = '';
+
+      const processStreamLine = (line) => {
+        if (!line.startsWith('data:')) return;
+        const data = line.slice(5).trim();
+        if (!data || data === '[DONE]') return;
+        try {
+          const parsed = JSON.parse(data);
+          const delta = parsed.choices?.[0]?.delta?.content || parsed.choices?.[0]?.message?.content || '';
+          // Deliberately ignore reasoning/thinking fields; the app only displays final answer content.
+          if (delta) {
+            contentLength += delta.length;
+            event.sender.send('chat-stream:' + requestId, { type: 'delta', delta });
+          }
+        } catch (err) {
+          writeChatLog(`stream-parse-skip requestId=${requestId} ${err.message}`);
+        }
+      };
 
       res.setEncoding('utf8');
       res.on('data', (chunk) => {
         raw += chunk;
+        if (res.statusCode < 200 || res.statusCode >= 300) return;
+        buffer += chunk;
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+        lines.forEach(processStreamLine);
       });
 
       res.on('end', () => {
@@ -55,31 +79,24 @@ function sendChatCompletion(event, { requestId, apiKey, model, messages }) {
           return;
         }
 
-        let content = '';
-        try {
-          const parsed = JSON.parse(raw);
-          content = parsed.choices?.[0]?.message?.content || parsed.choices?.[0]?.delta?.content || '';
-        } catch (err) {
-          writeChatLog(`parse-error requestId=${requestId} ${err.message} raw=${raw.slice(0, 120)}`);
-        }
+        if (buffer.trim()) processStreamLine(buffer);
 
-        if (!content) {
+        if (!contentLength) {
           const msg = '服务端返回为空，请换一个模型重试';
           writeChatLog(`empty requestId=${requestId} bytes=${raw.length}`);
           reject(new Error(msg));
           return;
         }
 
-        event.sender.send('chat-stream:' + requestId, { type: 'delta', delta: content });
         event.sender.send('chat-stream:' + requestId, { type: 'done' });
-        writeChatLog(`end requestId=${requestId} status=${res.statusCode} bytes=${raw.length} content=${content.length}`);
-        resolve({ ok: true, deltas: 1 });
+        writeChatLog(`end requestId=${requestId} status=${res.statusCode} bytes=${raw.length} content=${contentLength}`);
+        resolve({ ok: true, streamed: true, contentLength });
       });
     });
 
-    req.setTimeout(60000, () => {
+    req.setTimeout(600000, () => {
       if (!completed) writeChatLog(`timeout requestId=${requestId}`);
-      req.destroy(new Error('请求超过 60 秒无响应，请换 GPT-5.4 或稍后重试'));
+      req.destroy(new Error('请求超过 10 分钟无响应，请换一个模型或稍后重试'));
     });
 
     req.on('error', (err) => {
