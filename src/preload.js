@@ -8,6 +8,9 @@ contextBridge.exposeInMainWorld('desktop', {
   checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),
   installUpdate: () => ipcRenderer.invoke('install-update'),
   chatCompletion: (data) => ipcRenderer.invoke('chat-completion', data),
+  chatTextCompletion: (data) => ipcRenderer.invoke('chat-text-completion', data),
+  generatePptx: (data) => ipcRenderer.invoke('generate-pptx', data),
+  openPptxForAnalysis: () => ipcRenderer.invoke('open-pptx-for-analysis'),
   onUpdateStatus: (handler) => {
     const listener = (_e, payload) => handler(payload);
     ipcRenderer.on('update-status', listener);

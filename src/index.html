@@ -378,6 +378,142 @@ button, input, select, textarea {
   margin-top: 6px;
 }
 .input-hint kbd { background: var(--bg-elevated); padding: 1px 5px; border-radius: 3px; font-family: monospace; font-size: 10px; }
+
+/* ─── PPT Studio ─── */
+.ppt-studio {
+  flex: 1;
+  overflow-y: auto;
+  padding: 22px;
+  background: var(--bg-primary);
+}
+.ppt-shell {
+  max-width: 1180px;
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: 360px 1fr;
+  gap: 18px;
+}
+.ppt-panel {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px;
+}
+.ppt-title {
+  font-size: 18px;
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+.ppt-subtitle {
+  color: var(--text-secondary);
+  font-size: 12px;
+  margin-bottom: 14px;
+}
+.ppt-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+.ppt-field label {
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+}
+.ppt-field input,
+.ppt-field select,
+.ppt-field textarea {
+  width: 100%;
+  border: 1px solid var(--border);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  border-radius: 8px;
+  padding: 9px 10px;
+  outline: none;
+}
+.ppt-field textarea {
+  min-height: 96px;
+  resize: vertical;
+}
+.ppt-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.ppt-btn {
+  border: 1px solid var(--border-light);
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  padding: 9px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: 600;
+}
+.ppt-btn.primary {
+  border: none;
+  background: var(--gradient);
+  color: #fff;
+}
+.ppt-btn:disabled {
+  opacity: .55;
+  cursor: wait;
+}
+.ppt-output {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 12px;
+}
+.ppt-status {
+  color: var(--text-secondary);
+  font-size: 12px;
+  min-height: 18px;
+}
+.ppt-slides {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 12px;
+}
+.ppt-slide-card {
+  min-height: 148px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-secondary);
+  padding: 12px;
+}
+.ppt-slide-thumb {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  object-fit: cover;
+  margin-bottom: 9px;
+}
+.ppt-slide-thumb.empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+.ppt-slide-card h4 {
+  font-size: 14px;
+  line-height: 1.35;
+  margin-bottom: 8px;
+}
+.ppt-slide-card ul {
+  padding-left: 16px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.ppt-report {
+  white-space: pre-wrap;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px;
+  color: var(--text-secondary);
+}
 </style>
 </head>
 <body>
@@ -410,6 +546,8 @@ button, input, select, textarea {
     <div style="display:flex;align-items:center;gap:10px">
       <div class="brand">⚡ 15code <span id="app-version" style="font-size:12px;color:var(--muted);font-weight:500"></span></div>
       <button class="menu-btn" onclick="newChat()" title="新建对话 (Ctrl+N)">+ 新建</button>
+      <button class="menu-btn" onclick="showChatMode()" title="聊天">聊天</button>
+      <button class="menu-btn" onclick="showPptStudio()" title="PPT Studio (Ctrl+P)">PPT Studio</button>
     </div>
     <div class="topbar-right">
       <select class="model-pick" id="model-pick"></select>
@@ -417,6 +555,82 @@ button, input, select, textarea {
       <button class="menu-btn" id="update-btn" onclick="checkForUpdates()" title="检查更新">检查更新</button>
       <button class="menu-btn" onclick="exportChat()" title="导出对话 (Ctrl+S)">⬇ 导出</button>
       <button class="menu-btn" onclick="logout()" title="登出">↗ 登出</button>
+    </div>
+  </div>
+
+  <!-- PPT Studio -->
+  <div class="ppt-studio" id="ppt-studio" style="display:none">
+    <div class="ppt-shell">
+      <div class="ppt-panel">
+        <div class="ppt-title">PPT Studio</div>
+        <div class="ppt-subtitle">生成 PPTX、优化已有 PPT，并自动生成页面配图</div>
+        <div class="ppt-field">
+          <label>主题</label>
+          <input id="ppt-topic" placeholder="例如：15code PPT Studio 产品方案"/>
+        </div>
+        <div class="ppt-field">
+          <label>场景</label>
+          <select id="ppt-scenario">
+            <option value="business">商务汇报</option>
+            <option value="sales">销售方案</option>
+            <option value="training">培训课件</option>
+            <option value="fundraising">融资 BP</option>
+            <option value="gov">政府/国企汇报</option>
+          </select>
+        </div>
+        <div class="ppt-field">
+          <label>风格</label>
+          <select id="ppt-style">
+            <option value="consulting">咨询风</option>
+            <option value="tech">科技深色</option>
+            <option value="gov">正式红蓝</option>
+          </select>
+        </div>
+        <div class="ppt-field">
+          <label>页数</label>
+          <select id="ppt-page-count">
+            <option value="8">8 页</option>
+            <option value="10" selected>10 页</option>
+            <option value="12">12 页</option>
+            <option value="15">15 页</option>
+          </select>
+        </div>
+        <div class="ppt-field">
+          <label>资料 / 要点</label>
+          <textarea id="ppt-source" placeholder="粘贴资料、会议记录、产品说明。也可以先留空，只按主题生成。"></textarea>
+        </div>
+        <div class="ppt-field">
+          <label>修改要求</label>
+          <textarea id="ppt-revision" placeholder="例如：压缩到 8 页、改成投资人风格、突出价格优势、每页标题更有结论。"></textarea>
+        </div>
+        <div class="ppt-field">
+          <label>图片引擎</label>
+          <select id="ppt-image-engine">
+            <option value="seedream-4.5">Seedream 4.5 高清</option>
+            <option value="seedream-4.0">Seedream 4.0 快速</option>
+            <option value="none">不生成图片</option>
+          </select>
+        </div>
+        <div class="ppt-actions">
+          <button class="ppt-btn primary" id="ppt-outline-btn" onclick="generatePptOutline()">生成大纲</button>
+          <button class="ppt-btn" id="ppt-revise-btn" onclick="revisePptOutline()">按要求修改</button>
+          <button class="ppt-btn" id="ppt-image-btn" onclick="generatePptImages()">生成配图</button>
+          <button class="ppt-btn" id="ppt-export-btn" onclick="exportPptx()">导出 PPTX</button>
+          <button class="ppt-btn" id="ppt-analyze-btn" onclick="analyzePptx()">美化已有 PPT</button>
+        </div>
+        <div class="ppt-status" id="ppt-status"></div>
+      </div>
+      <div class="ppt-output">
+        <div class="ppt-panel">
+          <div class="ppt-title">页面预览</div>
+          <div class="ppt-subtitle">AI 先生成结构化页面和配图，再由本地 PPTX 引擎渲染为可编辑文件。</div>
+          <div class="ppt-slides" id="ppt-slides"></div>
+        </div>
+        <div class="ppt-panel">
+          <div class="ppt-title">美化诊断</div>
+          <div class="ppt-report" id="ppt-report">上传已有 PPTX 后，这里会输出逻辑、标题、页数和视觉优化建议。</div>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -463,8 +677,17 @@ const state = {
   currentModel: null,
   messages: [],        // [{role, content}]
   attachments: [],     // [{name, content}]
+  pptSlides: [],
+  pptImages: {},       // slideIndex -> { dataUrl, model, prompt }
   streaming: false,
 };
+
+const MAX_ATTACHMENT_BYTES = 2 * 1024 * 1024;
+const MAX_ATTACHMENT_CHARS = 50000;
+const TEXT_FILE_EXTENSIONS = new Set([
+  'txt', 'md', 'json', 'csv', 'py', 'js', 'ts', 'go', 'rs', 'java',
+  'html', 'css', 'log', 'xml', 'yml', 'yaml', 'sh', 'sql', 'c', 'cpp', 'h',
+]);
 
 // ═══════════════════════ 工具 ═══════════════════════
 function openLink(url) {
@@ -593,6 +816,7 @@ function showApp() {
   for (const m of state.models) {
     const family = m.modelId?.startsWith('claude') ? 'Claude' :
                    m.modelId?.startsWith('glm') ? 'GLM' :
+                   m.modelId?.startsWith('deepseek') ? 'DeepSeek' :
                    m.modelId?.startsWith('gpt') || m.modelId?.startsWith('codex') ? 'GPT / Codex' : '其他';
     if (!groups[family]) groups[family] = [];
     groups[family].push(m);
@@ -642,8 +866,321 @@ async function refreshBalance() {
   }
 }
 
+// ═══════════════════════ PPT Studio ═══════════════════════
+function showChatMode() {
+  document.getElementById('ppt-studio').style.display = 'none';
+  document.getElementById('chat-area').style.display = 'block';
+  document.querySelector('.input-area').style.display = 'block';
+  document.getElementById('input').focus();
+}
+
+function showPptStudio() {
+  document.getElementById('chat-area').style.display = 'none';
+  document.querySelector('.input-area').style.display = 'none';
+  document.getElementById('ppt-studio').style.display = 'block';
+  document.getElementById('ppt-topic').focus();
+  if (!state.pptSlides.length) {
+    state.pptSlides = buildFallbackPptSlides(
+      document.getElementById('ppt-topic').value.trim() || '15code PPT Studio',
+      Number(document.getElementById('ppt-page-count').value || 10)
+    );
+    renderPptSlides();
+  }
+}
+
+function setPptStatus(text) {
+  document.getElementById('ppt-status').textContent = text || '';
+}
+
+function buildFallbackPptSlides(topic, count) {
+  const base = [
+    { title: topic, subtitle: 'AI 生成演示文稿', bullets: [], visualType: 'cover', notes: '开场介绍主题和目标。' },
+    { title: '演示目标', subtitle: '', bullets: ['明确听众和决策目标', '聚焦最重要的业务问题', '用清晰结构组织材料'], visualType: 'content' },
+    { title: '背景与现状', subtitle: '', bullets: ['行业环境正在变化', '现有流程存在效率瓶颈', '需要更稳定的交付方式'], visualType: 'content' },
+    { title: '核心方案', subtitle: '', bullets: ['围绕目标设计内容结构', '自动生成页面和视觉元素', '导出可编辑 PPTX'], visualType: 'process' },
+    { title: '关键能力', subtitle: '', bullets: ['文档理解', '页面规划', '图片生成', '风格统一', '讲稿生成'], visualType: 'matrix' },
+    { title: '实施路径', subtitle: '', bullets: ['第一阶段完成生成闭环', '第二阶段支持 PPT 美化', '第三阶段接入企业模板库'], visualType: 'timeline' },
+    { title: '预期收益', subtitle: '', bullets: ['降低制作时间', '提升表达质量', '增强交付一致性'], visualType: 'chart' },
+    { title: '风险与控制', subtitle: '', bullets: ['内容需人工确认', '图片需统一风格', '关键数据保留来源'], visualType: 'content' },
+    { title: '下一步', subtitle: '', bullets: ['确认目标模板', '接入图片生成接口', '完成打包测试'], visualType: 'closing' },
+  ];
+  while (base.length < count) {
+    base.splice(base.length - 1, 0, {
+      title: `补充页面 ${base.length}`,
+      subtitle: '',
+      bullets: ['补充关键事实', '增加案例或数据', '强化结论表达'],
+      visualType: 'content',
+    });
+  }
+  return base.slice(0, count);
+}
+
+function extractJsonObject(text) {
+  const raw = String(text || '').trim();
+  const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  const candidate = fenced ? fenced[1] : raw;
+  const start = candidate.indexOf('{');
+  const end = candidate.lastIndexOf('}');
+  if (start < 0 || end < start) throw new Error('AI 没有返回 JSON');
+  return JSON.parse(candidate.slice(start, end + 1));
+}
+
+function normalizePptSlidesFromAi(data, topic, count) {
+  const slides = Array.isArray(data?.slides) ? data.slides : [];
+  const normalized = slides.map((s, i) => ({
+    title: String(s.title || `第 ${i + 1} 页`).trim(),
+    subtitle: String(s.subtitle || '').trim(),
+    bullets: Array.isArray(s.bullets) ? s.bullets.map(x => String(x).trim()).filter(Boolean).slice(0, 5) : [],
+    visualType: String(s.visualType || (i === 0 ? 'cover' : 'content')).trim(),
+    notes: String(s.notes || '').trim(),
+  })).filter(s => s.title);
+  return normalized.length ? normalized.slice(0, count) : buildFallbackPptSlides(topic, count);
+}
+
+function getPptImageModel() {
+  const engine = document.getElementById('ppt-image-engine').value;
+  if (engine === 'seedream-4.0') return 'doubao-seedream-4-0-250828';
+  if (engine === 'none') return '';
+  return 'doubao-seedream-4-5-251128';
+}
+
+function buildPptImagePrompt(slide, index, topic, style, scenario) {
+  const styleText = {
+    consulting: 'clean consulting deck, crisp composition, business-grade visual, restrained colors',
+    tech: 'premium dark technology visual, subtle cyan green accents, high contrast, polished enterprise software style',
+    gov: 'formal government and state-owned enterprise presentation visual, red blue accents, clean and dignified',
+  }[style] || 'professional presentation visual';
+  const sceneText = {
+    business: 'business presentation',
+    sales: 'sales proposal',
+    training: 'training courseware',
+    fundraising: 'fundraising pitch deck',
+    gov: 'formal report',
+  }[scenario] || 'presentation';
+  const bullets = (slide.bullets || []).join(', ');
+  return [
+    `Create a 16:9 image for a ${sceneText}.`,
+    `Topic: ${topic}.`,
+    `Slide ${index + 1}: ${slide.title}. ${slide.subtitle || ''}`,
+    bullets ? `Key ideas: ${bullets}.` : '',
+    `Visual style: ${styleText}.`,
+    'No text, no letters, no watermark, no logo, no UI screenshots unless explicitly relevant.',
+    'Use a strong central metaphor or clean business illustration suitable for a PowerPoint slide.',
+  ].filter(Boolean).join(' ');
+}
+
+function renderPptSlides() {
+  const box = document.getElementById('ppt-slides');
+  box.innerHTML = '';
+  state.pptSlides.forEach((slide, i) => {
+    const card = document.createElement('div');
+    card.className = 'ppt-slide-card';
+    const image = state.pptImages[i]?.dataUrl;
+    card.innerHTML = `
+      ${image ? `<img class="ppt-slide-thumb" src="${image}" alt="slide visual ${i + 1}">` : '<div class="ppt-slide-thumb empty">未生成配图</div>'}
+      <div style="color:var(--text-muted);font-size:11px;margin-bottom:6px">#${i + 1} · ${escapeHtml(slide.visualType || 'content')}</div>
+      <h4>${escapeHtml(slide.title)}</h4>
+      ${slide.subtitle ? `<div style="color:var(--text-muted);font-size:12px;margin-bottom:8px">${escapeHtml(slide.subtitle)}</div>` : ''}
+      <ul>${(slide.bullets || []).map(b => `<li>${escapeHtml(b)}</li>`).join('')}</ul>
+    `;
+    box.appendChild(card);
+  });
+}
+
+async function generatePptOutline() {
+  const btn = document.getElementById('ppt-outline-btn');
+  const topic = document.getElementById('ppt-topic').value.trim() || '15code PPT Studio';
+  const scenario = document.getElementById('ppt-scenario').value;
+  const style = document.getElementById('ppt-style').value;
+  const count = Number(document.getElementById('ppt-page-count').value || 10);
+  const source = document.getElementById('ppt-source').value.trim();
+  btn.disabled = true;
+  setPptStatus('正在生成 PPT 大纲...');
+  try {
+    if (!state.apiKey || !state.currentModel || !window.desktop?.chatTextCompletion) {
+      state.pptSlides = buildFallbackPptSlides(topic, count);
+    } else {
+      const prompt = `你是专业演示文稿策划师。请为下面主题生成 ${count} 页 PPT 结构，场景=${scenario}，视觉风格=${style}。
+要求：
+1. 只返回 JSON，不要解释。
+2. JSON 格式：{"slides":[{"title":"","subtitle":"","bullets":[""],"visualType":"cover|content|process|matrix|timeline|chart|closing","notes":""}]}
+3. 标题必须结论化，每页 bullets 不超过 5 条。
+4. 给每页 notes 写 1-2 句口播提示。
+5. 如果需要图片，用 visualType 表达，不要生成图片。
+
+主题：${topic}
+
+资料：
+${source || '无额外资料，请按主题生成。'}`;
+      const result = await window.desktop.chatTextCompletion({
+        apiKey: state.apiKey,
+        model: state.currentModel,
+        messages: [{ role: 'user', content: prompt }],
+        maxTokens: 3500,
+      });
+      state.pptSlides = normalizePptSlidesFromAi(extractJsonObject(result.content), topic, count);
+    }
+    state.pptImages = {};
+    renderPptSlides();
+    setPptStatus(`已生成 ${state.pptSlides.length} 页结构，可以继续生成配图。`);
+  } catch (e) {
+    state.pptSlides = buildFallbackPptSlides(topic, count);
+    state.pptImages = {};
+    renderPptSlides();
+    setPptStatus('AI 大纲失败，已使用本地模板兜底：' + e.message);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function revisePptOutline() {
+  const btn = document.getElementById('ppt-revise-btn');
+  const topic = document.getElementById('ppt-topic').value.trim() || '15code PPT Studio';
+  const scenario = document.getElementById('ppt-scenario').value;
+  const style = document.getElementById('ppt-style').value;
+  const count = Number(document.getElementById('ppt-page-count').value || 10);
+  const revision = document.getElementById('ppt-revision').value.trim();
+  if (!revision) {
+    setPptStatus('请先填写修改要求。');
+    return;
+  }
+  if (!state.pptSlides.length) {
+    state.pptSlides = buildFallbackPptSlides(topic, count);
+  }
+  btn.disabled = true;
+  setPptStatus('正在按要求修改 PPT 结构...');
+  try {
+    if (!state.apiKey || !state.currentModel || !window.desktop?.chatTextCompletion) {
+      throw new Error('未连接 AI，无法按要求修改');
+    }
+    const prompt = `你是专业 PPT 编辑。请根据用户修改要求，重写现有 PPT 结构。
+只返回 JSON，不要解释。
+JSON 格式：{"slides":[{"title":"","subtitle":"","bullets":[""],"visualType":"cover|content|process|matrix|timeline|chart|closing","notes":""}]}
+要求：总页数控制在 ${count} 页左右，标题结论化，每页 bullets 不超过 5 条，保留可编辑 PPT 的清晰结构。
+
+主题：${topic}
+场景：${scenario}
+风格：${style}
+
+用户修改要求：
+${revision}
+
+现有 PPT：
+${JSON.stringify({ slides: state.pptSlides }, null, 2)}`;
+    const result = await window.desktop.chatTextCompletion({
+      apiKey: state.apiKey,
+      model: state.currentModel,
+      messages: [{ role: 'user', content: prompt }],
+      maxTokens: 3500,
+    });
+    state.pptSlides = normalizePptSlidesFromAi(extractJsonObject(result.content), topic, count);
+    state.pptImages = {};
+    renderPptSlides();
+    setPptStatus(`已按要求修改为 ${state.pptSlides.length} 页。配图已清空，可重新生成。`);
+  } catch (e) {
+    setPptStatus('修改失败：' + e.message);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function generatePptImages() {
+  const btn = document.getElementById('ppt-image-btn');
+  const topic = document.getElementById('ppt-topic').value.trim() || '15code PPT Studio';
+  const scenario = document.getElementById('ppt-scenario').value;
+  const style = document.getElementById('ppt-style').value;
+  const model = getPptImageModel();
+  if (!model) {
+    setPptStatus('已选择不生成图片。');
+    return;
+  }
+  if (!state.sessionToken) {
+    setPptStatus('请先登录后再生成图片。');
+    return;
+  }
+  if (!state.pptSlides.length) {
+    state.pptSlides = buildFallbackPptSlides(topic, Number(document.getElementById('ppt-page-count').value || 10));
+    renderPptSlides();
+  }
+
+  const prompts = state.pptSlides.map((slide, index) => ({
+    index,
+    title: slide.title,
+    prompt: buildPptImagePrompt(slide, index, topic, style, scenario),
+  }));
+
+  btn.disabled = true;
+  setPptStatus(`正在生成 ${prompts.length} 张 PPT 配图...`);
+  try {
+    const result = await fetchJson(PLATFORM + '/api/ppt/images', {
+      method: 'POST',
+      body: JSON.stringify({ model, prompts, style, size: model.includes('4-5') ? '2560x1440' : '1280x720' }),
+    });
+    const images = result.images || [];
+    for (const image of images) {
+      if (typeof image.index === 'number' && image.dataUrl) {
+        state.pptImages[image.index] = { dataUrl: image.dataUrl, model: image.model || model, prompt: prompts[image.index]?.prompt || '' };
+      }
+    }
+    renderPptSlides();
+    setPptStatus(`已生成 ${images.length} 张配图，可直接导出 PPTX。`);
+  } catch (e) {
+    setPptStatus('生成配图失败：' + e.message);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function exportPptx() {
+  const topic = document.getElementById('ppt-topic').value.trim() || '15code PPT Studio';
+  const scenario = document.getElementById('ppt-scenario').value;
+  const style = document.getElementById('ppt-style').value;
+  if (!state.pptSlides.length) state.pptSlides = buildFallbackPptSlides(topic, Number(document.getElementById('ppt-page-count').value || 10));
+  setPptStatus('正在生成 PPTX...');
+  try {
+    const result = await window.desktop.generatePptx({ topic, scenario, style, slides: state.pptSlides, slideImages: state.pptImages });
+    setPptStatus(result.ok ? `已导出 ${result.slides} 页：${result.path}` : '已取消导出');
+  } catch (e) {
+    setPptStatus('导出失败：' + e.message);
+  }
+}
+
+async function analyzePptx() {
+  const btn = document.getElementById('ppt-analyze-btn');
+  btn.disabled = true;
+  setPptStatus('正在读取 PPTX...');
+  try {
+    const info = await window.desktop.openPptxForAnalysis();
+    if (!info.ok) {
+      setPptStatus('已取消分析');
+      return;
+    }
+    const compact = info.slides.map(s => `第${s.index}页：${s.text || '(无文本)'}`).join('\n').slice(0, 12000);
+    let report = `文件：${info.name}\n页数：${info.slideCount}\n大小：${(info.size / 1024 / 1024).toFixed(2)} MB\n\n`;
+    if (state.apiKey && state.currentModel && window.desktop?.chatTextCompletion) {
+      setPptStatus('正在生成美化诊断...');
+      const result = await window.desktop.chatTextCompletion({
+        apiKey: state.apiKey,
+        model: state.currentModel,
+        maxTokens: 2600,
+        messages: [{ role: 'user', content: `你是 PPT 美化顾问。请基于以下 PPT 文本，输出结构化诊断，包含：1 逻辑问题 2 标题优化 3 页面压缩建议 4 视觉风格建议 5 可执行修改清单。\n\n${compact}` }],
+      });
+      report += result.content || '';
+    } else {
+      report += '未连接 AI，仅完成文本读取。建议：检查标题是否结论化、每页要点是否超过 5 条、章节之间是否有明确递进关系。';
+    }
+    document.getElementById('ppt-report').textContent = report;
+    setPptStatus('诊断完成');
+  } catch (e) {
+    setPptStatus('分析失败：' + e.message);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 // ═══════════════════════ 聊天 ═══════════════════════
 function newChat() {
+  showChatMode();
   state.messages = [];
   state.attachments = [];
   renderMessages();
@@ -844,10 +1381,43 @@ function removeAttachment(i) {
 }
 function addAttachment(name, content) {
   // 截断过长
-  const max = 50000;
+  const max = MAX_ATTACHMENT_CHARS;
   if (content.length > max) content = content.slice(0, max) + '\n\n...(文件太长，已截断到前 5 万字符)';
   state.attachments.push({ name, content });
   renderAttachments();
+}
+
+function isLikelyTextFile(file) {
+  const ext = (file.name.split('.').pop() || '').toLowerCase();
+  return TEXT_FILE_EXTENSIONS.has(ext) || (file.type && file.type.startsWith('text/'));
+}
+
+async function readAttachmentFile(file) {
+  if (file.size > MAX_ATTACHMENT_BYTES) {
+    throw new Error(`${file.name} 超过 2MB，请拆分后再导入`);
+  }
+  if (!isLikelyTextFile(file)) {
+    throw new Error(`${file.name} 不是支持的文本文件`);
+  }
+
+  const buffer = await file.arrayBuffer();
+  const bytes = new Uint8Array(buffer);
+  const sample = bytes.subarray(0, Math.min(bytes.length, 4096));
+  if (sample.includes(0)) {
+    throw new Error(`${file.name} 看起来是二进制文件`);
+  }
+
+  return new TextDecoder('utf-8', { fatal: false }).decode(buffer);
+}
+
+async function importAttachmentFiles(files) {
+  for (const f of files) {
+    try {
+      addAttachment(f.name, await readAttachmentFile(f));
+    } catch (e) {
+      alert(e.message);
+    }
+  }
 }
 
 function openFileMenu() {
@@ -857,10 +1427,7 @@ function openFileMenu() {
   inp.multiple = true;
   inp.accept = '.txt,.md,.json,.csv,.py,.js,.ts,.go,.rs,.java,.html,.css,.log,.xml,.yml,.yaml,.sh,.sql,.c,.cpp,.h';
   inp.onchange = async (e) => {
-    for (const f of e.target.files) {
-      const text = await f.text();
-      addAttachment(f.name, text);
-    }
+    await importAttachmentFiles(e.target.files);
   };
   inp.click();
 }
@@ -869,9 +1436,7 @@ function openFileMenu() {
 document.addEventListener('dragover', e => { e.preventDefault(); });
 document.addEventListener('drop', async e => {
   e.preventDefault();
-  for (const f of e.dataTransfer.files) {
-    try { addAttachment(f.name, await f.text()); } catch {}
-  }
+  await importAttachmentFiles(e.dataTransfer.files);
 });
 
 // ═══════════════════════ 导出 ═══════════════════════
@@ -904,6 +1469,7 @@ document.addEventListener('keydown', e => {
   if (c && e.key === 'n') { newChat(); e.preventDefault(); }
   if (c && e.key === 's') { exportChat(); e.preventDefault(); }
   if (c && e.key === 'o') { openFileMenu(); e.preventDefault(); }
+  if (c && e.key === 'p') { showPptStudio(); e.preventDefault(); }
 });
 
 // textarea 自动高度
@@ -917,6 +1483,7 @@ if (window.desktop) {
   window.desktop.onMenu('new-chat', () => newChat());
   window.desktop.onMenu('file-loaded', ({ name, content }) => addAttachment(name, content));
   window.desktop.onMenu('export', () => exportChat());
+  window.desktop.onMenu('ppt-studio', () => showPptStudio());
   if (window.desktop.onUpdateStatus) {
     window.desktop.onUpdateStatus((status) => {
       const btn = document.getElementById('update-btn');
