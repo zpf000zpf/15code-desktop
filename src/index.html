@@ -680,6 +680,9 @@ const state = {
   pptSlides: [],
   pptImages: {},       // slideIndex -> { dataUrl, model, prompt }
   streaming: false,
+  currentRequestId: null,
+  stopRequested: false,
+  streamAbortController: null,
 };
 
 const MAX_ATTACHMENT_BYTES = 2 * 1024 * 1024;
@@ -731,6 +734,46 @@ async function fetchJson(url, opts = {}) {
   try { data = JSON.parse(text); } catch { data = { raw: text }; }
   if (!r.ok) throw new Error(data.error || data.detail || text || r.statusText);
   return data;
+}
+
+async function fetchStream(url, opts = {}) {
+  opts.headers = { 'Content-Type': 'application/json', ...(opts.headers || {}) };
+  if (state.sessionToken && !opts.headers.Authorization) {
+    opts.headers.Authorization = 'Bearer ' + state.sessionToken;
+  }
+  const r = await fetch(url, opts);
+  if (!r.ok) {
+    const text = await r.text();
+    let data;
+    try { data = JSON.parse(text); } catch { data = { error: text }; }
+    throw new Error(data.error || data.detail || text || r.statusText);
+  }
+  return r;
+}
+
+function parseSseFrame(frame) {
+  let event = 'message';
+  const data = [];
+  frame.split(/\r?\n/).forEach(line => {
+    if (line.startsWith('event:')) event = line.slice(6).trim() || 'message';
+    if (line.startsWith('data:')) data.push(line.slice(5).trimStart());
+  });
+  return { event, data: data.join('\n') };
+}
+
+function extractStreamDelta(data) {
+  if (!data || data === '[DONE]') return '';
+  try {
+    const parsed = JSON.parse(data);
+    return parsed.choices?.[0]?.delta?.content || parsed.choices?.[0]?.message?.content || '';
+  } catch {
+    return '';
+  }
+}
+
+function isNearChatBottom() {
+  const area = document.getElementById('chat-area');
+  return area.scrollHeight - area.scrollTop - area.clientHeight < 120;
 }
 
 // ═══════════════════════ 登录 ═══════════════════════
@@ -1234,10 +1277,13 @@ function regenMsg(i) {
 }
 
 async function sendMessage() {
+  if (state.streaming) {
+    await cancelGeneration();
+    return;
+  }
   const input = document.getElementById('input');
   const text = input.value.trim();
   if (!text && state.attachments.length === 0) return;
-  if (state.streaming) return;
 
   // 组装用户消息（附件拼接）
   let userContent = text;
@@ -1260,18 +1306,48 @@ async function sendMessage() {
 
 async function sendToAssistant() {
   state.streaming = true;
+  state.stopRequested = false;
   const btn = document.getElementById('send-btn');
-  btn.disabled = true;
-  btn.textContent = '...';
+  btn.disabled = false;
+  btn.textContent = '停止';
 
   // 占位消息
   state.messages.push({ role: 'assistant', content: '' });
   const idx = state.messages.length - 1;
   renderMessages();
 
+  const STREAM_RENDER_INTERVAL = 80;
+  let renderTimer = null;
+  let lastStreamRenderAt = 0;
+  const renderAssistant = (final = false) => {
+    if (renderTimer) {
+      clearTimeout(renderTimer);
+      renderTimer = null;
+    }
+    lastStreamRenderAt = performance.now();
+    const last = document.querySelectorAll('#messages .msg').item(idx);
+    if (last) {
+      const body = last.querySelector('.msg-body');
+      if (final) body.innerHTML = mdToHtml(state.messages[idx].content || '');
+      else body.textContent = state.messages[idx].content || '正在生成...';
+    }
+    if (isNearChatBottom()) {
+      const area = document.getElementById('chat-area');
+      area.scrollTop = area.scrollHeight;
+    }
+  };
+  const queueAssistantRender = () => {
+    if (renderTimer) return;
+    const wait = Math.max(0, STREAM_RENDER_INTERVAL - (performance.now() - lastStreamRenderAt));
+    renderTimer = setTimeout(() => {
+      renderTimer = null;
+      requestAnimationFrame(() => renderAssistant(false));
+    }, wait);
+  };
+
   try {
-    if (!state.apiKey) {
-      throw new Error('未找到可用 API Key，请退出后重新登录');
+    if (!state.sessionToken) {
+      throw new Error('登录状态已失效，请重新登录');
     }
     if (!state.currentModel) {
       throw new Error('请先选择模型');
@@ -1282,85 +1358,103 @@ async function sendToAssistant() {
       messages: state.messages.slice(0, -1).map(m => ({ role: m.role, content: m.content })),
     };
 
-    if (window.desktop?.chatCompletion && window.desktop?.onChatStream) {
-      const requestId = Date.now().toString(36) + Math.random().toString(36).slice(2);
-      const off = window.desktop.onChatStream(requestId, (event) => {
-        if (event.type !== 'delta' || !event.delta) return;
-        if (!state.messages[idx].content) { state.messages[idx].content = ''; }
-        state.messages[idx].content += event.delta;
-        const last = document.querySelectorAll('#messages .msg').item(idx);
-        if (last) last.querySelector('.msg-body').innerHTML = mdToHtml(state.messages[idx].content);
-        const area = document.getElementById('chat-area');
-        area.scrollTop = area.scrollHeight;
-      });
-
-      try {
-        const last = document.querySelectorAll('#messages .msg').item(idx);
-        if (last) last.querySelector('.msg-body').innerHTML = '<span style=\"color:var(--muted)\">已发送，等待完整回复...</span>';
-        await window.desktop.chatCompletion({
-          requestId,
-          apiKey: state.apiKey,
-          ...payload,
-        });
-      } finally {
-        off();
-      }
-      return;
-    }
-
-    const resp = await fetch(LLM + '/v1/chat/completions', {
+    const last = document.querySelectorAll('#messages .msg').item(idx);
+    if (last) last.querySelector('.msg-body').textContent = '正在判断是否需要搜索...';
+    state.streamAbortController = new AbortController();
+    const response = await fetchStream(PLATFORM + '/api/search-chat', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer ' + state.apiKey,
-      },
+      signal: state.streamAbortController.signal,
       body: JSON.stringify({
         ...payload,
+        searchMode: 'auto',
         stream: true,
       }),
     });
 
-    if (!resp.ok) {
-      const txt = await resp.text();
-      throw new Error('HTTP ' + resp.status + ': ' + txt.slice(0, 200));
-    }
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let sources = [];
+    let streamError = '';
 
-    const reader = resp.body.getReader();
-    const decoder = new TextDecoder('utf-8');
-    let buf = '';
     while (true) {
-      const { done, value } = await reader.read();
+      const { value, done } = await reader.read();
       if (done) break;
-      buf += decoder.decode(value, { stream: true });
-      const lines = buf.split('\n');
-      buf = lines.pop();
-      for (const line of lines) {
-        if (!line.startsWith('data:')) continue;
-        const data = line.slice(5).trim();
-        if (data === '[DONE]') continue;
-        try {
-          const chunk = JSON.parse(data);
-          const delta = chunk.choices?.[0]?.delta?.content || '';
-          if (delta) {
-            state.messages[idx].content += delta;
-            // 轻量刷新（避免全量重绘）
-            const last = document.querySelectorAll('#messages .msg').item(idx);
-            if (last) last.querySelector('.msg-body').innerHTML = mdToHtml(state.messages[idx].content);
-            const area = document.getElementById('chat-area');
-            area.scrollTop = area.scrollHeight;
-          }
-        } catch {}
+      buffer += decoder.decode(value, { stream: true });
+      const frames = buffer.split(/\r?\n\r?\n/);
+      buffer = frames.pop() || '';
+      for (const frame of frames) {
+        const parsed = parseSseFrame(frame);
+        if (parsed.event === 'meta') {
+          try {
+            const meta = JSON.parse(parsed.data);
+            sources = Array.isArray(meta.sources) ? meta.sources : [];
+            if (!state.messages[idx].content && meta.searched) {
+              const body = document.querySelectorAll('#messages .msg').item(idx)?.querySelector('.msg-body');
+              if (body) body.textContent = '已搜索最新信息，正在生成...';
+            }
+          } catch {}
+          continue;
+        }
+        if (parsed.event === 'error') {
+          try { streamError = JSON.parse(parsed.data).error || parsed.data; }
+          catch { streamError = parsed.data; }
+          continue;
+        }
+        if (parsed.data === '[DONE]') break;
+        const delta = extractStreamDelta(parsed.data);
+        if (delta) {
+          state.messages[idx].content += delta;
+          queueAssistantRender();
+        }
       }
     }
+
+    if (streamError && !state.messages[idx].content) throw new Error(streamError);
+    if (Array.isArray(sources) && sources.length > 0 && !/来源|Sources/i.test(state.messages[idx].content.slice(-500))) {
+      state.messages[idx].content += '\n\n来源:\n' + sources
+        .map(s => `[${s.id}] ${s.title}\n${s.url}`)
+        .join('\n');
+    }
+    if (!state.messages[idx].content) state.messages[idx].content = '未返回内容';
+    renderAssistant(true);
+    return;
   } catch (e) {
-    state.messages[idx].content = '❌ 出错了：' + e.message;
-    renderMessages();
+    if (state.stopRequested || e.name === 'AbortError') {
+      if (state.messages[idx].content) {
+        state.messages[idx].content += '\n\n[已停止]';
+        renderAssistant(true);
+      } else {
+        state.messages[idx].content = '[已停止]';
+        renderMessages();
+      }
+    } else {
+      state.messages[idx].content = '❌ 出错了：' + e.message;
+      renderMessages();
+    }
   } finally {
     state.streaming = false;
+    state.currentRequestId = null;
+    state.streamAbortController = null;
     btn.disabled = false;
     btn.textContent = '发送 →';
     refreshBalance();  // 聊天后立即刷新余额
     document.getElementById('input').focus();
+  }
+}
+
+async function cancelGeneration() {
+  if (!state.streaming) return;
+  state.stopRequested = true;
+  const btn = document.getElementById('send-btn');
+  btn.disabled = true;
+  btn.textContent = '停止中...';
+  if (state.currentRequestId && window.desktop?.cancelChatCompletion) {
+    await window.desktop.cancelChatCompletion(state.currentRequestId);
+    return;
+  }
+  if (state.streamAbortController) {
+    state.streamAbortController.abort();
   }
 }
 
