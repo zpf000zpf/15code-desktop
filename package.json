@@ -1,6 +1,6 @@
 {
   "name": "15code-desktop",
-  "version": "1.0.11",
+  "version": "1.0.12",
   "description": "15code 桌面客户端 — 统一 Claude / GPT / GLM 接入",
   "main": "src/main.js",
   "author": "15code <dev@15code.com>",
@@ -14,8 +14,8 @@
     "build:linux": "electron-builder --linux"
   },
   "devDependencies": {
-    "electron": "^32.3.3",
-    "electron-builder": "^25.0.0"
+    "electron": "^43.2.0",
+    "electron-builder": "^26.15.3"
   },
   "build": {
     "appId": "com.15code.desktop",
@@ -72,8 +72,11 @@
     }
   },
   "dependencies": {
-    "electron-updater": "^6.8.3",
+    "electron-updater": "^6.8.9",
     "jszip": "^3.10.1",
     "pptxgenjs": "^4.0.1"
+  },
+  "overrides": {
+    "js-yaml": "^4.3.0"
   }
 }

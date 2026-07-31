@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8"/>
 <title>15code</title>
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self' https://new.15code.com https://claude.15code.com https://15code.com; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; img-src 'self' data:;">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self' https://new.15code.com https://claude.15code.com https://15code.com; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; img-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'none';">
 <style>
 :root {
   --bg-primary: #0a0a0f;
@@ -668,11 +668,10 @@ button, input, select, textarea {
 const PLATFORM = 'https://15code.com';
 const LLM = 'https://claude.15code.com';
 
-const SESSION_KEY = '15code:session';
 const state = {
   user: null,
   apiKey: null,        // go_key for calling LLM
-  sessionToken: localStorage.getItem(SESSION_KEY) || null, // JWT for /api/* (Bearer)
+  sessionToken: null, // JWT for /api/* (Bearer), persisted by Electron safeStorage
   models: [],          // from /api/pricing
   currentModel: null,
   messages: [],        // [{role, content}]
@@ -684,6 +683,7 @@ const state = {
   stopRequested: false,
   streamAbortController: null,
 };
+let balanceRefreshTimer = null;
 
 const MAX_ATTACHMENT_BYTES = 2 * 1024 * 1024;
 const MAX_ATTACHMENT_CHARS = 50000;
@@ -732,7 +732,11 @@ async function fetchJson(url, opts = {}) {
   const text = await r.text();
   let data;
   try { data = JSON.parse(text); } catch { data = { raw: text }; }
-  if (!r.ok) throw new Error(data.error || data.detail || text || r.statusText);
+  if (!r.ok) {
+    const error = new Error(data.error || data.detail || text || r.statusText);
+    error.status = r.status;
+    throw error;
+  }
   return data;
 }
 
@@ -797,7 +801,7 @@ async function doLogin(e) {
       throw new Error('服务端未返回 sessionToken（请确认服务端已升级到支持 X-Auth-Mode: bearer）');
     }
     state.sessionToken = loginResp.sessionToken;
-    localStorage.setItem(SESSION_KEY, state.sessionToken);
+    await window.desktop?.setSessionToken?.(state.sessionToken);
 
     // 登录后同时拿：用户信息、余额、可用 API tokens
     const me = await fetchJson(PLATFORM + '/api/me');
@@ -840,7 +844,11 @@ function logout() {
     state.sessionToken = null;
     state.messages = [];
     state.attachments = [];
-    localStorage.removeItem(SESSION_KEY);
+    if (balanceRefreshTimer) {
+      clearInterval(balanceRefreshTimer);
+      balanceRefreshTimer = null;
+    }
+    window.desktop?.clearSessionToken?.();
     document.getElementById('app').style.display = 'none';
     document.getElementById('login-page').style.display = 'flex';
   });
@@ -889,7 +897,8 @@ function showApp() {
   document.getElementById('hero-model').textContent = getModelName(state.currentModel);
 
   refreshBalance();
-  setInterval(refreshBalance, 30000);  // 30s 刷余额
+  if (balanceRefreshTimer) clearInterval(balanceRefreshTimer);
+  balanceRefreshTimer = setInterval(refreshBalance, 30000);  // 30s 刷余额
 }
 
 function getModelName(id) {
@@ -1449,10 +1458,6 @@ async function cancelGeneration() {
   const btn = document.getElementById('send-btn');
   btn.disabled = true;
   btn.textContent = '停止中...';
-  if (state.currentRequestId && window.desktop?.cancelChatCompletion) {
-    await window.desktop.cancelChatCompletion(state.currentRequestId);
-    return;
-  }
   if (state.streamAbortController) {
     state.streamAbortController.abort();
   }
@@ -1631,8 +1636,9 @@ async function checkForUpdates() {
   } catch (e) {}
 })();
 
-// 启动时尝试恢复会话（用 localStorage 里的 sessionToken）
+// 启动时尝试恢复由 Electron safeStorage 保存的会话。
 (async function bootstrap() {
+  state.sessionToken = await window.desktop?.getSessionToken?.() || null;
   if (!state.sessionToken) return; // 没保存过 token，留在登录页
   try {
     const me = await fetchJson(PLATFORM + '/api/me');
@@ -1654,9 +1660,11 @@ async function checkForUpdates() {
       showApp();
     }
   } catch (e) {
-    // token 失效或网络错误：清掉本地 token，停在登录页
-    state.sessionToken = null;
-    localStorage.removeItem(SESSION_KEY);
+    // 仅在服务端明确拒绝凭证时清理；临时断网不销毁登录状态。
+    if (e.status === 401 || e.status === 403) {
+      state.sessionToken = null;
+      await window.desktop?.clearSessionToken?.();
+    }
   }
 })();
 </script>

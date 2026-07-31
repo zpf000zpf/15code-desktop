@@ -18,16 +18,42 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with: { node-version: "20" }
+          with: { node-version: "22" }
 
       - name: Install deps
         run: npm install
+
+      - name: Audit runtime dependencies
+        run: npm audit --omit=dev --audit-level=high
+
+      - name: Require Windows signing certificate
+        if: matrix.os == 'windows-latest'
+        shell: bash
+        env:
+          CSC_LINK: ${{ secrets.WINDOWS_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CSC_KEY_PASSWORD }}
+        run: |
+          test -n "$CSC_LINK"
+          test -n "$CSC_KEY_PASSWORD"
 
       - name: Build Windows
         if: matrix.os == 'windows-latest'
         run: npm run build:win
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CSC_LINK: ${{ secrets.WINDOWS_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CSC_KEY_PASSWORD }}
+
+      - name: Verify Windows signature
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem dist/*.exe | Select-Object -First 1
+          if (-not $installer) { throw 'Windows installer was not produced' }
+          $signature = Get-AuthenticodeSignature $installer.FullName
+          if ($signature.Status -ne 'Valid') {
+            throw "Invalid Authenticode signature: $($signature.Status)"
+          }
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4

@@ -4,6 +4,9 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('desktop', {
   saveFile: (data) => ipcRenderer.invoke('save-file', data),
   openExternal: (url) => ipcRenderer.invoke('open-external', url),
+  getSessionToken: () => ipcRenderer.invoke('auth:get-session'),
+  setSessionToken: (token) => ipcRenderer.invoke('auth:set-session', token),
+  clearSessionToken: () => ipcRenderer.invoke('auth:clear-session'),
   getAppInfo: () => ipcRenderer.invoke('get-app-info'),
   checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),
   installUpdate: () => ipcRenderer.invoke('install-update'),

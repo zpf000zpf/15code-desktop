@@ -1,6 +1,6 @@
 # 15code Desktop
 
-> **15code 桌面客户端 v1.0** — 无需 API key，登录即用  
+> **15code 桌面客户端 v1.0.12** — 无需 API key，登录即用
 > Windows · macOS · Linux 跨平台 · 由 [15code](https://15code.com) 出品
 
 ![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)
@@ -16,7 +16,7 @@
 - 💬 **聊天**：流式响应 · Markdown 渲染 · 代码高亮
 - 📎 **附件**：拖入任意文本文件（txt/md/json/csv/源码）→ 自动读入
 - 📥 **导出**：一键导出整个对话为 Markdown
-- 🤖 **8 个模型**：Claude Opus/Sonnet/Haiku · GPT-5.4 · GPT-5.3 Codex · GLM-5/5.1
+- 🤖 **8 个模型**：Claude Opus/Sonnet/Haiku · GPT-5.4 · GPT-5.3 Codex Spark · GLM-5/5.1
 - ⌨️ **快捷键**：`Ctrl+Enter` 发送 · `Ctrl+N` 新对话 · `Ctrl+O` 导入文件
 
 ## 📥 下载
@@ -48,9 +48,9 @@ npm start
 
 ## 🛠️ 技术栈
 
-- **Electron 32** + 纯 HTML/JS（无前端框架，代码总量 ~900 行）
-- 登录：`POST new.15code.com/api/login`（cookie session）
-- 聊天：流式 SSE 调用 `claude.15code.com/v1/chat/completions`
+- **Electron 43** + 纯 HTML/JS（无前端框架）
+- 登录：15code Bearer Session，使用 Electron `safeStorage` 加密保存
+- 聊天：流式 SSE 调用 15code 搜索聊天接口，支持主动停止
 - 无本地数据库（v1.0 会话在内存里；关闭 = 清空）
 
 ## 📸 截图

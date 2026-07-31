@@ -1,18 +1,69 @@
 // 15code Desktop — Electron main process
-const { app, BrowserWindow, Menu, shell, dialog, ipcMain } = require('electron');
+const { app, BrowserWindow, Menu, shell, dialog, ipcMain, safeStorage } = require('electron');
 const path = require('path');
+const { pathToFileURL } = require('url');
 const fs = require('fs');
 const https = require('https');
 const { autoUpdater } = require('electron-updater');
 const PptxGenJS = require('pptxgenjs');
 const JSZip = require('jszip');
 
-// Internal Linux test builds may run on desktops without usable Chromium sandbox/FUSE.
-app.commandLine.appendSwitch('no-sandbox');
-app.commandLine.appendSwitch('disable-gpu-sandbox');
-
 let chatLogPath = null;
 let updateReady = false;
+let volatileSessionToken = null;
+
+function getSessionFilePath() {
+  return path.join(app.getPath('userData'), 'session-token.bin');
+}
+
+function saveSessionToken(token) {
+  if (typeof token !== 'string' || token.length < 16 || token.length > 16384) {
+    throw new Error('登录凭证格式无效');
+  }
+  volatileSessionToken = token;
+  if (!safeStorage.isEncryptionAvailable()) {
+    return { ok: true, persisted: false };
+  }
+  const encrypted = safeStorage.encryptString(token);
+  const sessionFile = getSessionFilePath();
+  const temporaryFile = sessionFile + '.tmp';
+  fs.writeFileSync(temporaryFile, encrypted, { mode: 0o600 });
+  fs.renameSync(temporaryFile, sessionFile);
+  fs.chmodSync(sessionFile, 0o600);
+  return { ok: true, persisted: true };
+}
+
+function loadSessionToken() {
+  if (volatileSessionToken) return volatileSessionToken;
+  if (!safeStorage.isEncryptionAvailable()) return null;
+  try {
+    const encrypted = fs.readFileSync(getSessionFilePath());
+    volatileSessionToken = safeStorage.decryptString(encrypted);
+    return volatileSessionToken;
+  } catch {
+    return null;
+  }
+}
+
+function clearSessionToken() {
+  volatileSessionToken = null;
+  try {
+    fs.rmSync(getSessionFilePath(), { force: true });
+  } catch {}
+  return { ok: true };
+}
+
+function normalizeExternalUrl(rawUrl) {
+  const parsed = new URL(String(rawUrl || ''));
+  if (parsed.protocol !== 'https:' || parsed.username || parsed.password) {
+    throw new Error('只允许打开安全的 HTTPS 链接');
+  }
+  return parsed.toString();
+}
+
+async function openExternalUrl(rawUrl) {
+  return shell.openExternal(normalizeExternalUrl(rawUrl));
+}
 
 function writeChatLog(message) {
   try {
@@ -493,6 +544,8 @@ async function readTextFileForImport(filePath) {
 }
 
 function createWindow() {
+  const appPagePath = path.join(__dirname, 'index.html');
+  const appPageUrl = pathToFileURL(appPagePath).href;
   const win = new BrowserWindow({
     width: 1200,
     height: 800,
@@ -504,19 +557,25 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
+      sandbox: true,
+      webSecurity: true,
     },
     backgroundColor: '#0a0a0f',
     show: false,
   });
 
-  win.loadFile(path.join(__dirname, 'index.html'));
+  win.loadFile(appPagePath);
   win.once('ready-to-show', () => win.show());
 
   // 外部链接统一用浏览器打开
   win.webContents.setWindowOpenHandler(({ url }) => {
-    shell.openExternal(url);
+    void openExternalUrl(url).catch(err => writeChatLog(`blocked-external-url ${err.message}`));
     return { action: 'deny' };
   });
+  win.webContents.on('will-navigate', (event, url) => {
+    if (url.split('#')[0] !== appPageUrl) event.preventDefault();
+  });
+  win.webContents.on('will-attach-webview', event => event.preventDefault());
 
   // 开发模式打开 DevTools
   if (process.argv.includes('--dev')) {
@@ -594,9 +653,9 @@ function createWindow() {
     {
       label: '帮助',
       submenu: [
-        { label: '15code 主站', click: () => shell.openExternal('https://15code.com') },
-        { label: '使用文档', click: () => shell.openExternal('https://15code.com/guide') },
-        { label: 'GitHub', click: () => shell.openExternal('https://github.com/zpf000zpf/15code-desktop') },
+        { label: '15code 主站', click: () => openExternalUrl('https://15code.com') },
+        { label: '使用文档', click: () => openExternalUrl('https://15code.com/guide') },
+        { label: 'GitHub', click: () => openExternalUrl('https://github.com/zpf000zpf/15code-desktop') },
         { type: 'separator' },
         {
           label: '检查更新',
@@ -637,7 +696,11 @@ ipcMain.handle('save-file', async (_e, { content, defaultName }) => {
 });
 
 // 打开外部链接
-ipcMain.handle('open-external', (_e, url) => shell.openExternal(url));
+ipcMain.handle('open-external', (_e, url) => openExternalUrl(url));
+
+ipcMain.handle('auth:get-session', () => loadSessionToken());
+ipcMain.handle('auth:set-session', (_e, token) => saveSessionToken(token));
+ipcMain.handle('auth:clear-session', () => clearSessionToken());
 
 ipcMain.handle('get-app-info', () => {
   if (!chatLogPath) chatLogPath = path.join(app.getPath('userData'), 'chat-debug.log');
