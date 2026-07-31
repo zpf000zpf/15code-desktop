@@ -26,15 +26,21 @@ jobs:
       - name: Audit runtime dependencies
         run: npm audit --omit=dev --audit-level=high
 
-      - name: Require Windows signing certificate
+      - name: Detect Windows signing certificate
+        id: signing
         if: matrix.os == 'windows-latest'
         shell: bash
         env:
           CSC_LINK: ${{ secrets.WINDOWS_CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CSC_KEY_PASSWORD }}
         run: |
-          test -n "$CSC_LINK"
-          test -n "$CSC_KEY_PASSWORD"
+          if [[ -n "$CSC_LINK" && -n "$CSC_KEY_PASSWORD" ]]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+            echo "Windows Authenticode signing enabled"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "Building an explicitly unsigned Beta installer"
+          fi
 
       - name: Build Windows
         if: matrix.os == 'windows-latest'
@@ -43,9 +49,10 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CSC_LINK: ${{ secrets.WINDOWS_CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CSC_KEY_PASSWORD }}
+          CSC_IDENTITY_AUTO_DISCOVERY: ${{ steps.signing.outputs.available }}
 
       - name: Verify Windows signature
-        if: matrix.os == 'windows-latest'
+        if: matrix.os == 'windows-latest' && steps.signing.outputs.available == 'true'
         shell: pwsh
         run: |
           $installer = Get-ChildItem dist/*.exe | Select-Object -First 1
@@ -55,6 +62,19 @@ jobs:
             throw "Invalid Authenticode signature: $($signature.Status)"
           }
 
+      - name: Verify unsigned Beta status
+        if: matrix.os == 'windows-latest' && steps.signing.outputs.available != 'true'
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem dist/*-unsigned-beta.exe | Select-Object -First 1
+          if (-not $installer) { throw 'Unsigned Beta installer was not produced' }
+          $signature = Get-AuthenticodeSignature $installer.FullName
+          if ($signature.Status -ne 'NotSigned') {
+            throw "Expected an unsigned Beta installer, got: $($signature.Status)"
+          }
+          $hash = Get-FileHash $installer.FullName -Algorithm SHA256
+          "SHA256 $($hash.Hash)  $($installer.Name)" | Tee-Object -FilePath "dist/$($installer.BaseName).sha256"
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
@@ -63,6 +83,7 @@ jobs:
             dist/*.exe
             dist/*.yml
             dist/*.blockmap
+            dist/*.sha256
 
       - name: Attach to Release
         if: startsWith(github.ref, 'refs/tags/')
@@ -72,4 +93,5 @@ jobs:
             dist/*.exe
             dist/*.yml
             dist/*.blockmap
+            dist/*.sha256
           token: ${{ secrets.GITHUB_TOKEN }}

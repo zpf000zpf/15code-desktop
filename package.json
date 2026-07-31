@@ -37,7 +37,7 @@
           ]
         }
       ],
-      "artifactName": "15code-desktop-${version}-${arch}.${ext}"
+      "artifactName": "15code-desktop-${version}-${arch}-unsigned-beta.${ext}"
     },
     "nsis": {
       "oneClick": false,
