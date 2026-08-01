@@ -7,6 +7,7 @@ contextBridge.exposeInMainWorld('desktop', {
   getSessionToken: () => ipcRenderer.invoke('auth:get-session'),
   setSessionToken: (token) => ipcRenderer.invoke('auth:set-session', token),
   clearSessionToken: () => ipcRenderer.invoke('auth:clear-session'),
+  bootstrapAccount: () => ipcRenderer.invoke('account:bootstrap'),
   getAppInfo: () => ipcRenderer.invoke('get-app-info'),
   checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),
   installUpdate: () => ipcRenderer.invoke('install-update'),
@@ -14,6 +15,10 @@ contextBridge.exposeInMainWorld('desktop', {
   chatTextCompletion: (data) => ipcRenderer.invoke('chat-text-completion', data),
   generatePptx: (data) => ipcRenderer.invoke('generate-pptx', data),
   openPptxForAnalysis: () => ipcRenderer.invoke('open-pptx-for-analysis'),
+  saveConversation: (data) => ipcRenderer.invoke('conversations:save', data),
+  loadConversation: (id) => ipcRenderer.invoke('conversations:load', id),
+  listConversations: (options) => ipcRenderer.invoke('conversations:list', options),
+  updateConversation: (data) => ipcRenderer.invoke('conversations:update', data),
   onUpdateStatus: (handler) => {
     const listener = (_e, payload) => handler(payload);
     ipcRenderer.on('update-status', listener);

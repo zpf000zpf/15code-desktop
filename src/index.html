@@ -546,6 +546,7 @@ button, input, select, textarea {
     <div style="display:flex;align-items:center;gap:10px">
       <div class="brand">⚡ 15code <span id="app-version" style="font-size:12px;color:var(--muted);font-weight:500"></span></div>
       <button class="menu-btn" onclick="newChat()" title="新建对话 (Ctrl+N)">+ 新建</button>
+      <button class="menu-btn" onclick="showConversationManager()" title="搜索、置顶、重命名、删除和恢复会话">会话</button>
       <button class="menu-btn" onclick="showChatMode()" title="聊天">聊天</button>
       <button class="menu-btn" onclick="showPptStudio()" title="PPT Studio (Ctrl+P)">PPT Studio</button>
     </div>
@@ -667,13 +668,19 @@ button, input, select, textarea {
 // ═══════════════════════ 全局状态 ═══════════════════════
 const PLATFORM = 'https://15code.com';
 const LLM = 'https://claude.15code.com';
+const CATALOG_URL = PLATFORM + '/api/catalog';
+const SUPPORTED_CATALOG_SCHEMA_VERSION = 1;
+const CATALOG_CACHE_KEY = '15code:catalog:v1';
 
 const state = {
   user: null,
-  apiKey: null,        // go_key for calling LLM
+  apiCredentialReady: false, // goKey remains encrypted in the Electron main process
   sessionToken: null, // JWT for /api/* (Bearer), persisted by Electron safeStorage
-  models: [],          // from /api/pricing
+  models: loadCachedCatalogModels(),
+  catalogWarning: null,
   currentModel: null,
+  currentConversationId: localStorage.getItem('15code:conversation') || crypto.randomUUID(),
+  currentDraft: '',
   messages: [],        // [{role, content}]
   attachments: [],     // [{name, content}]
   pptSlides: [],
@@ -684,6 +691,7 @@ const state = {
   streamAbortController: null,
 };
 let balanceRefreshTimer = null;
+let draftSaveTimer = null;
 
 const MAX_ATTACHMENT_BYTES = 2 * 1024 * 1024;
 const MAX_ATTACHMENT_CHARS = 50000;
@@ -738,6 +746,65 @@ async function fetchJson(url, opts = {}) {
     throw error;
   }
   return data;
+}
+
+function normalizeCatalogModel(model) {
+  const capabilities = model?.capabilities || {};
+  return {
+    modelId: model?.id || model?.modelId || '',
+    displayName: model?.displayName || model?.name || model?.id || model?.modelId || '',
+    provider: model?.provider || '',
+    family: model?.family || 'other',
+    status: model?.status || 'available',
+    recommended: Boolean(model?.recommended),
+    sortOrder: Number.isFinite(Number(model?.sortOrder)) ? Number(model.sortOrder) : Number.MAX_SAFE_INTEGER,
+    capabilities: {
+      text: capabilities.text !== false,
+      vision: Boolean(capabilities.vision),
+      webSearch: Boolean(capabilities.webSearch),
+      tools: Boolean(capabilities.tools),
+    },
+  };
+}
+
+function loadCachedCatalogModels() {
+  try {
+    const cached = JSON.parse(localStorage.getItem(CATALOG_CACHE_KEY) || 'null');
+    if (cached?.schemaVersion !== SUPPORTED_CATALOG_SCHEMA_VERSION || !Array.isArray(cached.models)) return [];
+    return cached.models.map(normalizeCatalogModel).filter(model => model.modelId);
+  } catch {
+    return [];
+  }
+}
+
+async function refreshCatalogModels() {
+  state.catalogWarning = null;
+  try {
+    const catalog = await fetchJson(CATALOG_URL);
+    if (catalog.schemaVersion !== SUPPORTED_CATALOG_SCHEMA_VERSION) {
+      const error = new Error('目录版本较新，请升级桌面客户端');
+      error.catalogSchemaUnsupported = true;
+      throw error;
+    }
+    const models = (catalog.models || [])
+      .map(normalizeCatalogModel)
+      .filter(model => model.modelId)
+      .sort((a, b) => a.sortOrder - b.sortOrder || a.displayName.localeCompare(b.displayName, 'zh-CN'));
+    if (!models.length) throw new Error('Catalog 未返回模型');
+    state.models = models;
+    localStorage.setItem(CATALOG_CACHE_KEY, JSON.stringify({
+      schemaVersion: catalog.schemaVersion,
+      generatedAt: catalog.generatedAt || null,
+      models,
+    }));
+  } catch (error) {
+    const cached = loadCachedCatalogModels();
+    if (!cached.length) throw error;
+    state.models = cached;
+    state.catalogWarning = error.catalogSchemaUnsupported
+      ? '目录版本较新，当前使用离线目录，请升级桌面客户端。'
+      : 'Catalog 暂时不可用，当前使用上次成功的离线目录。';
+  }
 }
 
 async function fetchStream(url, opts = {}) {
@@ -803,29 +870,16 @@ async function doLogin(e) {
     state.sessionToken = loginResp.sessionToken;
     await window.desktop?.setSessionToken?.(state.sessionToken);
 
-    // 登录后同时拿：用户信息、余额、可用 API tokens
-    const me = await fetchJson(PLATFORM + '/api/me');
-    state.user = me.user;
+    // 主进程使用 safeStorage 保存 goKey，渲染层永远不接收或持有 Key。
+    const account = await window.desktop.bootstrapAccount();
+    state.user = account.user;
+    state.apiCredentialReady = true;
 
-    // 确保有一个可用的 go_key
-    let tokens = await fetchJson(PLATFORM + '/api/tokens');
-    tokens = tokens.tokens || [];
-    let active = tokens.find(t => t.status === 'active' && t.go_key);
-    if (!active) {
-      const created = await fetchJson(PLATFORM + '/api/tokens', {
-        method: 'POST',
-        body: JSON.stringify({ name: '15code Desktop', withGoKey: true }),
-      });
-      state.apiKey = created.goKey;
-    } else {
-      state.apiKey = active.go_key;
-    }
-
-    // 拉模型列表
-    const pricing = await fetchJson(PLATFORM + '/api/pricing');
-    state.models = pricing.models || [];
+    // 公共 Catalog 是模型名称、排序、状态和能力的唯一来源。
+    await refreshCatalogModels();
 
     showApp();
+    await restoreCurrentConversation();
   } catch (e) {
     err.textContent = '登录失败：' + e.message;
     err.style.display = 'block';
@@ -840,7 +894,7 @@ function logout() {
   const headers = state.sessionToken ? { 'Authorization': 'Bearer ' + state.sessionToken } : {};
   fetch(PLATFORM + '/api/auth/logout', { method: 'POST', headers }).finally(() => {
     state.user = null;
-    state.apiKey = null;
+    state.apiCredentialReady = false;
     state.sessionToken = null;
     state.messages = [];
     state.attachments = [];
@@ -865,12 +919,9 @@ function showApp() {
   sel.innerHTML = '';
   const groups = {};
   for (const m of state.models) {
-    const family = m.modelId?.startsWith('claude') ? 'Claude' :
-                   m.modelId?.startsWith('glm') ? 'GLM' :
-                   m.modelId?.startsWith('deepseek') ? 'DeepSeek' :
-                   m.modelId?.startsWith('gpt') || m.modelId?.startsWith('codex') ? 'GPT / Codex' : '其他';
-    if (!groups[family]) groups[family] = [];
-    groups[family].push(m);
+    const group = getModelGroupName(m);
+    if (!groups[group]) groups[group] = [];
+    groups[group].push(m);
   }
   for (const [g, ms] of Object.entries(groups)) {
     const og = document.createElement('optgroup');
@@ -878,15 +929,25 @@ function showApp() {
     for (const m of ms) {
       const op = document.createElement('option');
       op.value = m.modelId;
-      op.textContent = m.displayName;
+      const badges = [];
+      if (m.recommended) badges.push('推荐');
+      if (m.capabilities.vision) badges.push('图片');
+      if (m.capabilities.webSearch) badges.push('联网');
+      if (m.capabilities.tools) badges.push('工具');
+      if (m.status !== 'available') badges.push(getModelStatusName(m.status));
+      op.textContent = m.displayName + (badges.length ? ' · ' + badges.join(' · ') : '');
+      op.disabled = m.status !== 'available';
       og.appendChild(op);
     }
     sel.appendChild(og);
   }
   // 默认选第一个
   if (state.models.length) {
-    const saved = localStorage.getItem('15code:model') || state.models[0].modelId;
-    sel.value = saved;
+    const available = state.models.filter(model => model.status === 'available');
+    const saved = localStorage.getItem('15code:model');
+    const fallback = available.find(model => model.recommended) || available[0];
+    const chosen = available.find(model => model.modelId === saved) || fallback;
+    if (chosen) sel.value = chosen.modelId;
     state.currentModel = sel.value;
   }
   sel.onchange = () => {
@@ -896,9 +957,45 @@ function showApp() {
   };
   document.getElementById('hero-model').textContent = getModelName(state.currentModel);
 
+  if (state.catalogWarning) {
+    const warning = state.catalogWarning;
+    state.catalogWarning = null;
+    setTimeout(() => window.alert(warning), 0);
+  }
+
   refreshBalance();
   if (balanceRefreshTimer) clearInterval(balanceRefreshTimer);
   balanceRefreshTimer = setInterval(refreshBalance, 30000);  // 30s 刷余额
+}
+
+async function restoreCurrentConversation() {
+  if (!window.desktop?.loadConversation) return;
+  const conversation = await window.desktop.loadConversation(state.currentConversationId);
+  if (!conversation) {
+    await persistCurrentConversation();
+    return;
+  }
+  state.messages = conversation.messages || [];
+  state.currentDraft = conversation.draft || '';
+  document.getElementById('input').value = state.currentDraft;
+  renderMessages();
+}
+
+function getModelGroupName(model) {
+  const familyNames = {
+    openai: 'OpenAI / Codex',
+    anthropic: 'Anthropic',
+    zhipu: '智谱 AI',
+    deepseek: 'DeepSeek',
+    qwen: 'Qwen',
+  };
+  return familyNames[model.family] || model.provider || '其他';
+}
+
+function getModelStatusName(status) {
+  if (status === 'maintenance') return '维护中';
+  if (status === 'paused' || status === 'disabled') return '已暂停';
+  return '不可用';
 }
 
 function getModelName(id) {
@@ -1049,7 +1146,7 @@ async function generatePptOutline() {
   btn.disabled = true;
   setPptStatus('正在生成 PPT 大纲...');
   try {
-    if (!state.apiKey || !state.currentModel || !window.desktop?.chatTextCompletion) {
+    if (!state.apiCredentialReady || !state.currentModel || !window.desktop?.chatTextCompletion) {
       state.pptSlides = buildFallbackPptSlides(topic, count);
     } else {
       const prompt = `你是专业演示文稿策划师。请为下面主题生成 ${count} 页 PPT 结构，场景=${scenario}，视觉风格=${style}。
@@ -1065,7 +1162,6 @@ async function generatePptOutline() {
 资料：
 ${source || '无额外资料，请按主题生成。'}`;
       const result = await window.desktop.chatTextCompletion({
-        apiKey: state.apiKey,
         model: state.currentModel,
         messages: [{ role: 'user', content: prompt }],
         maxTokens: 3500,
@@ -1102,7 +1198,7 @@ async function revisePptOutline() {
   btn.disabled = true;
   setPptStatus('正在按要求修改 PPT 结构...');
   try {
-    if (!state.apiKey || !state.currentModel || !window.desktop?.chatTextCompletion) {
+    if (!state.apiCredentialReady || !state.currentModel || !window.desktop?.chatTextCompletion) {
       throw new Error('未连接 AI，无法按要求修改');
     }
     const prompt = `你是专业 PPT 编辑。请根据用户修改要求，重写现有 PPT 结构。
@@ -1120,7 +1216,6 @@ ${revision}
 现有 PPT：
 ${JSON.stringify({ slides: state.pptSlides }, null, 2)}`;
     const result = await window.desktop.chatTextCompletion({
-      apiKey: state.apiKey,
       model: state.currentModel,
       messages: [{ role: 'user', content: prompt }],
       maxTokens: 3500,
@@ -1209,10 +1304,9 @@ async function analyzePptx() {
     }
     const compact = info.slides.map(s => `第${s.index}页：${s.text || '(无文本)'}`).join('\n').slice(0, 12000);
     let report = `文件：${info.name}\n页数：${info.slideCount}\n大小：${(info.size / 1024 / 1024).toFixed(2)} MB\n\n`;
-    if (state.apiKey && state.currentModel && window.desktop?.chatTextCompletion) {
+    if (state.apiCredentialReady && state.currentModel && window.desktop?.chatTextCompletion) {
       setPptStatus('正在生成美化诊断...');
       const result = await window.desktop.chatTextCompletion({
-        apiKey: state.apiKey,
         model: state.currentModel,
         maxTokens: 2600,
         messages: [{ role: 'user', content: `你是 PPT 美化顾问。请基于以下 PPT 文本，输出结构化诊断，包含：1 逻辑问题 2 标题优化 3 页面压缩建议 4 视觉风格建议 5 可执行修改清单。\n\n${compact}` }],
@@ -1232,13 +1326,78 @@ async function analyzePptx() {
 
 // ═══════════════════════ 聊天 ═══════════════════════
 function newChat() {
+  void persistCurrentConversation();
   showChatMode();
+  state.currentConversationId = crypto.randomUUID();
+  localStorage.setItem('15code:conversation', state.currentConversationId);
+  state.currentDraft = '';
   state.messages = [];
   state.attachments = [];
   renderMessages();
   renderAttachments();
   document.getElementById('input').value = '';
   document.getElementById('input').focus();
+  void persistCurrentConversation();
+}
+
+function conversationTitle() {
+  const first = state.messages.find(message => message.role === 'user' && message.content?.trim());
+  const text = (first?.content || '新对话').replace(/\s+/g, ' ').trim();
+  return text.length > 36 ? text.slice(0, 36) + '…' : text;
+}
+
+async function persistCurrentConversation() {
+  if (!window.desktop?.saveConversation || !state.currentConversationId) return;
+  await window.desktop.saveConversation({
+    id: state.currentConversationId,
+    title: conversationTitle(),
+    model: state.currentModel,
+    draft: document.getElementById('input')?.value || state.currentDraft || '',
+    messages: state.messages,
+  });
+}
+
+async function openConversation(id) {
+  await persistCurrentConversation();
+  const conversation = await window.desktop.loadConversation(id);
+  if (!conversation) return alert('会话不存在或已被删除');
+  state.currentConversationId = id;
+  localStorage.setItem('15code:conversation', id);
+  state.messages = conversation.messages || [];
+  state.currentDraft = conversation.draft || '';
+  if (conversation.model && state.models.some(model => model.modelId === conversation.model && model.status === 'available')) {
+    state.currentModel = conversation.model;
+    document.getElementById('model-pick').value = conversation.model;
+  }
+  document.getElementById('input').value = state.currentDraft;
+  showChatMode();
+  renderMessages();
+}
+
+async function showConversationManager() {
+  const query = prompt('搜索会话标题（留空显示全部；输入“最近删除”恢复会话）', '') || '';
+  const deleted = query.trim() === '最近删除';
+  const rows = await window.desktop.listConversations({ query: deleted ? '' : query, deleted });
+  if (!rows.length) return alert(deleted ? '最近没有删除的会话' : '没有找到会话');
+  const choice = prompt(rows.map((row, index) => `${index + 1}. ${row.pinned ? '📌 ' : ''}${row.title}`).join('\n')
+    + (deleted ? '\n\n输入序号恢复' : '\n\n输入序号管理'));
+  const row = rows[Number(choice) - 1];
+  if (!row) return;
+  if (deleted) {
+    await window.desktop.updateConversation({ id: row.id, deleted: false });
+    return alert('会话已恢复');
+  }
+  const action = prompt('输入操作：打开 / 重命名 / 置顶 / 删除', '打开');
+  if (action === '打开') return openConversation(row.id);
+  if (action === '重命名') {
+    const title = prompt('新标题', row.title);
+    if (title?.trim()) await window.desktop.updateConversation({ id: row.id, title: title.trim() });
+  } else if (action === '置顶') {
+    await window.desktop.updateConversation({ id: row.id, pinned: !row.pinned });
+  } else if (action === '删除') {
+    await window.desktop.updateConversation({ id: row.id, deleted: true });
+    if (row.id === state.currentConversationId) newChat();
+  }
 }
 
 function renderMessages() {
@@ -1282,6 +1441,7 @@ function regenMsg(i) {
   // 删除 i 之后的所有消息，重发
   state.messages = state.messages.slice(0, i);
   renderMessages();
+  void persistCurrentConversation();
   sendToAssistant();
 }
 
@@ -1449,6 +1609,7 @@ async function sendToAssistant() {
     btn.textContent = '发送 →';
     refreshBalance();  // 聊天后立即刷新余额
     document.getElementById('input').focus();
+    await persistCurrentConversation();
   }
 }
 
@@ -1575,6 +1736,9 @@ document.addEventListener('keydown', e => {
 document.getElementById('input').addEventListener('input', function() {
   this.style.height = 'auto';
   this.style.height = Math.min(this.scrollHeight, 180) + 'px';
+  state.currentDraft = this.value;
+  clearTimeout(draftSaveTimer);
+  draftSaveTimer = setTimeout(() => void persistCurrentConversation(), 350);
 });
 
 // Electron 菜单事件
@@ -1601,6 +1765,10 @@ if (window.desktop) {
       } else if (status.type === 'downloaded') {
         btn.textContent = '安装更新';
         btn.disabled = false;
+      } else if (status.type === 'catalog-available') {
+        btn.textContent = status.mandatory ? '必须升级' : '下载 v' + status.version;
+        btn.dataset.updateState = 'catalog-available';
+        btn.disabled = false;
       } else if (status.type === 'error') {
         btn.textContent = '更新失败';
         btn.disabled = false;
@@ -1618,6 +1786,10 @@ if (window.desktop) {
 async function checkForUpdates() {
   const btn = document.getElementById('update-btn');
   if (btn?.dataset.updateState === 'downloaded') {
+    await window.desktop?.installUpdate?.();
+    return;
+  }
+  if (btn?.dataset.updateState === 'catalog-available') {
     await window.desktop?.installUpdate?.();
     return;
   }
@@ -1641,23 +1813,13 @@ async function checkForUpdates() {
   state.sessionToken = await window.desktop?.getSessionToken?.() || null;
   if (!state.sessionToken) return; // 没保存过 token，留在登录页
   try {
-    const me = await fetchJson(PLATFORM + '/api/me');
-    if (me.user && me.user.email) {
-      state.user = me.user;
-      let tokens = await fetchJson(PLATFORM + '/api/tokens');
-      tokens = tokens.tokens || [];
-      let active = tokens.find(t => t.status === 'active' && t.go_key);
-      if (!active) {
-        const c = await fetchJson(PLATFORM + '/api/tokens', {
-          method: 'POST', body: JSON.stringify({ name: '15code Desktop', withGoKey: true }),
-        });
-        state.apiKey = c.goKey;
-      } else {
-        state.apiKey = active.go_key;
-      }
-      const pricing = await fetchJson(PLATFORM + '/api/pricing');
-      state.models = pricing.models || [];
+    const account = await window.desktop.bootstrapAccount();
+    if (account.user && account.user.email) {
+      state.user = account.user;
+      state.apiCredentialReady = true;
+      await refreshCatalogModels();
       showApp();
+      await restoreCurrentConversation();
     }
   } catch (e) {
     // 仅在服务端明确拒绝凭证时清理；临时断网不销毁登录状态。

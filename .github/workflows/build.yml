@@ -21,7 +21,24 @@ jobs:
         with: { node-version: "22" }
 
       - name: Install deps
-        run: npm install
+        run: npm ci
+
+      - name: Catalog, credential and SQLite regression gate
+        shell: bash
+        run: |
+          bash scripts/check_catalog_regressions.sh
+          node --check src/main.js
+          node --check src/preload.js
+          node - <<'NODE'
+          (async () => {
+            const response = await fetch('https://15code.com/api/catalog');
+            if (!response.ok) throw new Error(`Catalog HTTP ${response.status}`);
+            const catalog = await response.json();
+            if (catalog.schemaVersion !== 1 || !catalog.releases?.desktop?.stable?.minimumSupportedVersion) {
+              throw new Error('Catalog release policy is incomplete');
+            }
+          })();
+          NODE
 
       - name: Audit runtime dependencies
         run: npm audit --omit=dev --audit-level=high

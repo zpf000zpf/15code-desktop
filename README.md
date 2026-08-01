@@ -27,7 +27,7 @@
 
 安装后在开始菜单找"15code"打开 → 用 15code 账户登录即可。
 
-v1.0.12 当前按未签名 Beta 发布，安装时 Windows 可能显示“未知发布者”或 SmartScreen 提示。请从官方 Release 下载并核对随安装包发布的 SHA256 文件。取得 Authenticode 证书后将切换为正式签名安装包。
+v1.0.13 当前按未签名 Beta 发布，安装时 Windows 可能显示“未知发布者”或 SmartScreen 提示。请从官方 Release 下载并核对随安装包发布的 SHA256 文件。取得 Authenticode 证书后将切换为正式签名安装包。
 
 ### macOS / Linux（构建中）
 
@@ -52,6 +52,9 @@ npm start
 
 - **Electron 43** + 纯 HTML/JS（无前端框架）
 - 登录：15code Bearer Session，使用 Electron `safeStorage` 加密保存
+- API Key：仅在 Electron 主进程使用 `safeStorage` 加密保存，渲染层不可读取
+- 会话：SQLite 持久化，支持搜索、置顶、重命名、删除、恢复和草稿
+- 模型与升级：读取公共 Catalog，支持离线目录、维护状态和最低版本策略
 - 聊天：流式 SSE 调用 15code 搜索聊天接口，支持主动停止
 - 无本地数据库（v1.0 会话在内存里；关闭 = 清空）
 

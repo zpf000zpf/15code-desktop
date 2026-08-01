@@ -7,13 +7,52 @@ const https = require('https');
 const { autoUpdater } = require('electron-updater');
 const PptxGenJS = require('pptxgenjs');
 const JSZip = require('jszip');
+const { DatabaseSync } = require('node:sqlite');
 
 let chatLogPath = null;
 let updateReady = false;
+let catalogUpdateUrl = null;
 let volatileSessionToken = null;
+let volatileApiKey = null;
+let chatDatabase = null;
 
 function getSessionFilePath() {
   return path.join(app.getPath('userData'), 'session-token.bin');
+}
+
+function getApiKeyFilePath() {
+  return path.join(app.getPath('userData'), 'api-key.bin');
+}
+
+function saveApiKey(apiKey) {
+  if (typeof apiKey !== 'string' || apiKey.length < 8 || apiKey.length > 16384) {
+    throw new Error('API Key 格式无效');
+  }
+  volatileApiKey = apiKey;
+  if (!safeStorage.isEncryptionAvailable()) return { ok: true, persisted: false };
+  const encrypted = safeStorage.encryptString(apiKey);
+  const target = getApiKeyFilePath();
+  const temporary = target + '.tmp';
+  fs.writeFileSync(temporary, encrypted, { mode: 0o600 });
+  fs.renameSync(temporary, target);
+  fs.chmodSync(target, 0o600);
+  return { ok: true, persisted: true };
+}
+
+function loadApiKey() {
+  if (volatileApiKey) return volatileApiKey;
+  if (!safeStorage.isEncryptionAvailable()) return null;
+  try {
+    volatileApiKey = safeStorage.decryptString(fs.readFileSync(getApiKeyFilePath()));
+    return volatileApiKey;
+  } catch {
+    return null;
+  }
+}
+
+function clearApiKey() {
+  volatileApiKey = null;
+  try { fs.rmSync(getApiKeyFilePath(), { force: true }); } catch {}
 }
 
 function saveSessionToken(token) {
@@ -50,6 +89,122 @@ function clearSessionToken() {
   try {
     fs.rmSync(getSessionFilePath(), { force: true });
   } catch {}
+  clearApiKey();
+  return { ok: true };
+}
+
+async function platformJson(route, options = {}) {
+  const token = loadSessionToken();
+  if (!token) throw new Error('登录已失效，请重新登录');
+  const response = await fetch('https://15code.com' + route, {
+    ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': 'Bearer ' + token,
+      ...(options.headers || {}),
+    },
+  });
+  const text = await response.text();
+  let data;
+  try { data = JSON.parse(text); } catch { data = { error: text }; }
+  if (!response.ok) {
+    const error = new Error(data.error || data.detail || `HTTP ${response.status}`);
+    error.status = response.status;
+    throw error;
+  }
+  return data;
+}
+
+async function bootstrapAccount() {
+  const me = await platformJson('/api/me');
+  const tokenResult = await platformJson('/api/tokens');
+  let active = (tokenResult.tokens || []).find(token => token.status === 'active' && token.go_key);
+  let apiKey = active?.go_key || '';
+  if (!apiKey) {
+    const created = await platformJson('/api/tokens', {
+      method: 'POST',
+      body: JSON.stringify({ name: '15code Desktop', withGoKey: true }),
+    });
+    apiKey = created.goKey || '';
+  }
+  if (!apiKey) throw new Error('未找到可用 API Key');
+  saveApiKey(apiKey);
+  return { user: me.user || null };
+}
+
+function getChatDatabase() {
+  if (chatDatabase) return chatDatabase;
+  chatDatabase = new DatabaseSync(path.join(app.getPath('userData'), 'chat-history.sqlite'));
+  chatDatabase.exec(`
+    PRAGMA journal_mode = WAL;
+    PRAGMA foreign_keys = ON;
+    CREATE TABLE IF NOT EXISTS conversations (
+      id TEXT PRIMARY KEY, title TEXT NOT NULL, model TEXT, draft TEXT NOT NULL DEFAULT '',
+      pinned INTEGER NOT NULL DEFAULT 0, deleted INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS messages (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, conversation_id TEXT NOT NULL,
+      role TEXT NOT NULL, content TEXT NOT NULL, created_at INTEGER NOT NULL,
+      FOREIGN KEY(conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_conversations_active ON conversations(deleted, pinned, updated_at);
+    CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id, id);
+  `);
+  return chatDatabase;
+}
+
+function saveConversation({ id, title, model, draft = '', messages = [] }) {
+  if (!id || !Array.isArray(messages)) throw new Error('会话数据无效');
+  const db = getChatDatabase();
+  const now = Date.now();
+  const existing = db.prepare('SELECT created_at, pinned, deleted FROM conversations WHERE id = ?').get(id);
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    db.prepare(`INSERT OR REPLACE INTO conversations
+      (id,title,model,draft,pinned,deleted,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?)`)
+      .run(id, String(title || '新对话').slice(0, 120), String(model || ''), String(draft || ''),
+        existing?.pinned || 0, existing?.deleted || 0, existing?.created_at || now, now);
+    db.prepare('DELETE FROM messages WHERE conversation_id = ?').run(id);
+    const insert = db.prepare('INSERT INTO messages(conversation_id,role,content,created_at) VALUES (?,?,?,?)');
+    messages.slice(-200).forEach((message, index) => {
+      if (message && ['user', 'assistant'].includes(message.role)) {
+        insert.run(id, message.role, String(message.content || ''), now + index);
+      }
+    });
+    db.exec('COMMIT');
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+  return { ok: true };
+}
+
+function loadConversation(id) {
+  const db = getChatDatabase();
+  const conversation = db.prepare('SELECT * FROM conversations WHERE id = ?').get(id);
+  if (!conversation) return null;
+  const messages = db.prepare('SELECT role, content FROM messages WHERE conversation_id = ? ORDER BY id').all(id);
+  return { ...conversation, messages };
+}
+
+function listConversations({ query = '', deleted = false } = {}) {
+  const db = getChatDatabase();
+  const like = `%${String(query).slice(0, 100)}%`;
+  return db.prepare(`SELECT id,title,model,draft,pinned,deleted,created_at,updated_at
+    FROM conversations WHERE deleted = ? AND title LIKE ? ORDER BY pinned DESC, updated_at DESC LIMIT 200`)
+    .all(deleted ? 1 : 0, like);
+}
+
+function updateConversation({ id, title, pinned, deleted, draft }) {
+  const db = getChatDatabase();
+  const row = db.prepare('SELECT * FROM conversations WHERE id = ?').get(id);
+  if (!row) throw new Error('会话不存在');
+  db.prepare(`UPDATE conversations SET title=?, pinned=?, deleted=?, draft=?, updated_at=? WHERE id=?`)
+    .run(title === undefined ? row.title : String(title).slice(0, 120),
+      pinned === undefined ? row.pinned : (pinned ? 1 : 0),
+      deleted === undefined ? row.deleted : (deleted ? 1 : 0),
+      draft === undefined ? row.draft : String(draft), Date.now(), id);
   return { ok: true };
 }
 
@@ -124,6 +279,23 @@ async function checkForUpdates(manual = false) {
     return { ok: false, message };
   }
   try {
+    const catalogResponse = await fetch('https://15code.com/api/catalog', { headers: { Accept: 'application/json' } });
+    if (catalogResponse.ok) {
+      const catalog = await catalogResponse.json();
+      const desktop = catalog.releases?.desktop || {};
+      const release = desktop.beta || desktop.stable;
+      if (release?.version) {
+        const newer = compareVersions(release.version, app.getVersion()) > 0;
+        const mandatory = (release.forceUpgradeBelow && compareVersions(app.getVersion(), release.forceUpgradeBelow) < 0)
+          || (release.minimumSupportedVersion && compareVersions(app.getVersion(), release.minimumSupportedVersion) < 0);
+        if (newer || mandatory) {
+          catalogUpdateUrl = new URL(release.downloadUrl, 'https://15code.com').toString();
+          sendUpdateStatus({ type: 'catalog-available', version: release.version, mandatory,
+            message: mandatory ? '当前版本已停止支持，请立即升级' : `发现 Catalog 新版 v${release.version}` });
+          return { ok: true, catalog: true, release, mandatory };
+        }
+      }
+    }
     const result = await autoUpdater.checkForUpdates();
     return { ok: true, updateInfo: result?.updateInfo || null };
   } catch (err) {
@@ -132,14 +304,24 @@ async function checkForUpdates(manual = false) {
   }
 }
 
-function sendChatCompletion(event, { requestId, apiKey, model, messages }) {
+function compareVersions(left, right) {
+  const a = String(left || '').replace(/^v/i, '').split('.').map(x => parseInt(x, 10) || 0);
+  const b = String(right || '').replace(/^v/i, '').split('.').map(x => parseInt(x, 10) || 0);
+  for (let i = 0; i < Math.max(a.length, b.length); i += 1) {
+    if ((a[i] || 0) !== (b[i] || 0)) return (a[i] || 0) > (b[i] || 0) ? 1 : -1;
+  }
+  return 0;
+}
+
+function sendChatCompletion(event, { requestId, model, messages }) {
   return new Promise((resolve, reject) => {
+    const apiKey = loadApiKey();
     if (!requestId || !apiKey || !model || !Array.isArray(messages)) {
       reject(new Error('聊天参数不完整，请重新登录后再试'));
       return;
     }
 
-    writeChatLog(`start requestId=${requestId} model=${model} messages=${messages.length} apiKey=${apiKey ? 'set' : 'missing'} mode=stream`);
+    writeChatLog(`start requestId=${requestId} model=${model} messages=${messages.length} credential=secure-storage mode=stream`);
     const body = JSON.stringify({ model, messages, stream: true, max_tokens: 4096 });
     let completed = false;
     let contentLength = 0;
@@ -226,8 +408,9 @@ function sendChatCompletion(event, { requestId, apiKey, model, messages }) {
   });
 }
 
-function sendChatTextCompletion(_event, { apiKey, model, messages, maxTokens = 3000 }) {
+function sendChatTextCompletion(_event, { model, messages, maxTokens = 3000 }) {
   return new Promise((resolve, reject) => {
+    const apiKey = loadApiKey();
     if (!apiKey || !model || !Array.isArray(messages)) {
       reject(new Error('AI 参数不完整，请重新登录后再试'));
       return;
@@ -701,15 +884,17 @@ ipcMain.handle('open-external', (_e, url) => openExternalUrl(url));
 ipcMain.handle('auth:get-session', () => loadSessionToken());
 ipcMain.handle('auth:set-session', (_e, token) => saveSessionToken(token));
 ipcMain.handle('auth:clear-session', () => clearSessionToken());
+ipcMain.handle('account:bootstrap', () => bootstrapAccount());
 
 ipcMain.handle('get-app-info', () => {
   if (!chatLogPath) chatLogPath = path.join(app.getPath('userData'), 'chat-debug.log');
-  return { version: app.getVersion(), chatLogPath };
+  return { version: app.getVersion(), chatLogPath, hasApiCredential: Boolean(loadApiKey()) };
 });
 
 ipcMain.handle('check-for-updates', () => checkForUpdates(true));
 
 ipcMain.handle('install-update', () => {
+  if (catalogUpdateUrl) return openExternalUrl(catalogUpdateUrl).then(() => ({ ok: true, external: true }));
   if (!updateReady) return { ok: false, message: '更新包尚未下载完成' };
   autoUpdater.quitAndInstall(false, true);
   return { ok: true };
@@ -719,6 +904,10 @@ ipcMain.handle('chat-completion', sendChatCompletion);
 ipcMain.handle('chat-text-completion', sendChatTextCompletion);
 ipcMain.handle('generate-pptx', generatePptx);
 ipcMain.handle('open-pptx-for-analysis', openPptxForAnalysis);
+ipcMain.handle('conversations:save', (_e, data) => saveConversation(data));
+ipcMain.handle('conversations:load', (_e, id) => loadConversation(id));
+ipcMain.handle('conversations:list', (_e, options) => listConversations(options));
+ipcMain.handle('conversations:update', (_e, data) => updateConversation(data));
 
 app.whenReady().then(() => {
   setupAutoUpdater();
@@ -728,6 +917,11 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
+});
+
+app.on('before-quit', () => {
+  try { chatDatabase?.close(); } catch {}
+  chatDatabase = null;
 });
 
 app.on('activate', () => {
