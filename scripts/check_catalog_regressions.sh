@@ -42,6 +42,17 @@ grep -q "forceUpgradeBelow" "$MAIN" \
 if grep -q 'getApiKey' "$PRELOAD"; then
   fail "Preload must not expose API Key access"
 fi
+grep -q "const IMAGE_MODELS = new Set(\['gpt-image-2'\])" "$MAIN" \
+  || fail "Desktop image generation must use the public gpt-image-2 model"
+grep -q "'/v1/images/generations'" "$MAIN" \
+  || fail "Desktop must use the 15code Images generation endpoint"
+grep -q "'/v1/images/edits'" "$MAIN" \
+  || fail "Desktop must use the 15code Images editing endpoint"
+grep -q '当前账号尚未开通图片权限' "$MAIN" \
+  || fail "Desktop image UI must preserve the server permission boundary"
+if grep -q 'gpt-image-1.5' "$MAIN" "$HTML"; then
+  fail "Desktop must not expose the unpriced gpt-image-1.5 alias"
+fi
 
 node - "$HTML" <<'NODE'
 const fs = require('fs');

@@ -514,6 +514,7 @@ button, input, select, textarea {
   padding: 14px;
   color: var(--text-secondary);
 }
+.image-studio{flex:1;overflow:auto;padding:24px;display:none}.image-shell{max-width:1080px;margin:auto;display:grid;grid-template-columns:360px 1fr;gap:20px}.image-panel{background:var(--bg-card);border:1px solid var(--border);border-radius:14px;padding:20px}.image-panel h2{margin:0 0 6px}.image-field{margin:14px 0}.image-field label{display:block;color:var(--text-muted);font-size:12px;margin-bottom:6px}.image-field textarea,.image-field select{width:100%;box-sizing:border-box;background:var(--bg-elevated);color:var(--text-primary);border:1px solid var(--border);border-radius:8px;padding:10px}.image-field textarea{min-height:110px;resize:vertical}.image-actions{display:flex;flex-wrap:wrap;gap:8px}.image-actions button{background:var(--accent);color:#fff;border:0;border-radius:8px;padding:9px 13px;cursor:pointer}.image-actions button.secondary{background:var(--bg-elevated);color:var(--text-primary);border:1px solid var(--border)}.image-actions button:disabled{opacity:.5;cursor:wait}.image-preview{min-height:420px;display:flex;align-items:center;justify-content:center;background:var(--bg-secondary);border:1px dashed var(--border);border-radius:12px;overflow:hidden}.image-preview img{max-width:100%;max-height:620px;object-fit:contain}.image-status{margin-top:12px;color:var(--text-muted);font-size:13px;white-space:pre-wrap}
 </style>
 </head>
 <body>
@@ -548,6 +549,7 @@ button, input, select, textarea {
       <button class="menu-btn" onclick="newChat()" title="新建对话 (Ctrl+N)">+ 新建</button>
       <button class="menu-btn" onclick="showConversationManager()" title="搜索、置顶、重命名、删除和恢复会话">会话</button>
       <button class="menu-btn" onclick="showChatMode()" title="聊天">聊天</button>
+      <button class="menu-btn" onclick="showImageStudio()" title="图片生成与编辑">图片</button>
       <button class="menu-btn" onclick="showPptStudio()" title="PPT Studio (Ctrl+P)">PPT Studio</button>
     </div>
     <div class="topbar-right">
@@ -556,6 +558,27 @@ button, input, select, textarea {
       <button class="menu-btn" id="update-btn" onclick="checkForUpdates()" title="检查更新">检查更新</button>
       <button class="menu-btn" onclick="exportChat()" title="导出对话 (Ctrl+S)">⬇ 导出</button>
       <button class="menu-btn" onclick="logout()" title="登出">↗ 登出</button>
+    </div>
+  </div>
+
+  <div class="image-studio" id="image-studio">
+    <div class="image-shell">
+      <div class="image-panel">
+        <h2>图片生成与编辑</h2>
+        <div style="color:var(--text-muted);font-size:13px">使用当前登录账号的 15code API Key</div>
+        <div class="image-field"><label>提示词</label><textarea id="image-prompt" placeholder="描述要生成的图片，或说明如何修改已上传图片"></textarea></div>
+        <div class="image-field"><label>尺寸</label><select id="image-size"><option>1024x1024</option><option>1536x1024</option><option>1024x1536</option></select></div>
+        <div class="image-field"><label>质量</label><select id="image-quality"><option value="low">低（快速）</option><option value="medium">中</option><option value="high">高</option></select></div>
+        <div class="image-field"><label>格式</label><select id="image-format"><option value="png">PNG</option><option value="jpeg">JPEG</option><option value="webp">WebP</option></select></div>
+        <div class="image-actions">
+          <button id="image-generate-btn" onclick="generateImage()">生成图片</button>
+          <button class="secondary" onclick="selectImageForEdit()">选择图片修改</button>
+          <button class="secondary" id="image-edit-btn" onclick="editSelectedImage()" disabled>执行修改</button>
+          <button class="secondary" id="image-save-btn" onclick="saveGeneratedImage()" disabled>保存图片</button>
+        </div>
+        <div class="image-status" id="image-status"></div>
+      </div>
+      <div class="image-panel"><div class="image-preview" id="image-preview"><span>生成结果或待修改图片将在这里显示</span></div></div>
     </div>
   </div>
 
@@ -685,6 +708,8 @@ const state = {
   attachments: [],     // [{name, content}]
   pptSlides: [],
   pptImages: {},       // slideIndex -> { dataUrl, model, prompt }
+  imageInputPath: null,
+  imageResult: null,
   streaming: false,
   currentRequestId: null,
   stopRequested: false,
@@ -1018,12 +1043,14 @@ async function refreshBalance() {
 // ═══════════════════════ PPT Studio ═══════════════════════
 function showChatMode() {
   document.getElementById('ppt-studio').style.display = 'none';
+  document.getElementById('image-studio').style.display = 'none';
   document.getElementById('chat-area').style.display = 'block';
   document.querySelector('.input-area').style.display = 'block';
   document.getElementById('input').focus();
 }
 
 function showPptStudio() {
+  document.getElementById('image-studio').style.display = 'none';
   document.getElementById('chat-area').style.display = 'none';
   document.querySelector('.input-area').style.display = 'none';
   document.getElementById('ppt-studio').style.display = 'block';
@@ -1035,6 +1062,60 @@ function showPptStudio() {
     );
     renderPptSlides();
   }
+}
+
+async function showImageStudio() {
+  document.getElementById('chat-area').style.display = 'none';
+  document.querySelector('.input-area').style.display = 'none';
+  document.getElementById('ppt-studio').style.display = 'none';
+  document.getElementById('image-studio').style.display = 'block';
+  document.getElementById('image-prompt').focus();
+  try {
+    const capabilities = await window.desktop.imageCapabilities();
+    setImageStatus(capabilities.generation ? '图片服务已连接。' : '当前账号尚未开通图片权限。');
+  } catch (error) { setImageStatus(error.message); }
+}
+
+function setImageStatus(message) { document.getElementById('image-status').textContent = message || ''; }
+function renderImagePreview(dataUrl) {
+  const preview = document.getElementById('image-preview');
+  preview.innerHTML = dataUrl ? `<img src="${dataUrl}" alt="15code image result">` : '<span>暂无图片</span>';
+}
+function imageOptions() {
+  return { prompt: document.getElementById('image-prompt').value.trim(), size: document.getElementById('image-size').value,
+    quality: document.getElementById('image-quality').value, format: document.getElementById('image-format').value };
+}
+async function generateImage() {
+  const options = imageOptions();
+  if (!options.prompt) return setImageStatus('请输入提示词。');
+  const button = document.getElementById('image-generate-btn'); button.disabled = true; setImageStatus('正在生成图片...');
+  try {
+    const result = await window.desktop.generateImage({ ...options, model: 'gpt-image-2' });
+    state.imageResult = result.dataUrl; renderImagePreview(result.dataUrl);
+    document.getElementById('image-save-btn').disabled = false;
+    setImageStatus(`生成完成。Token：${Number(result.usage?.total_tokens || 0).toLocaleString()}`);
+  } catch (error) { setImageStatus('生成失败：' + error.message); } finally { button.disabled = false; }
+}
+async function selectImageForEdit() {
+  try {
+    const selected = await window.desktop.selectImageForEdit(); if (!selected?.ok) return;
+    state.imageInputPath = selected.path; renderImagePreview(selected.previewUrl);
+    document.getElementById('image-edit-btn').disabled = false; setImageStatus(`已选择：${selected.name}`);
+  } catch (error) { setImageStatus('读取图片失败：' + error.message); }
+}
+async function editSelectedImage() {
+  const options = imageOptions(); if (!state.imageInputPath || !options.prompt) return setImageStatus('请选择图片并填写修改要求。');
+  const button = document.getElementById('image-edit-btn'); button.disabled = true; setImageStatus('正在修改图片...');
+  try {
+    const result = await window.desktop.editImage({ ...options, path: state.imageInputPath });
+    state.imageResult = result.dataUrl; renderImagePreview(result.dataUrl);
+    document.getElementById('image-save-btn').disabled = false; setImageStatus('修改完成。');
+  } catch (error) { setImageStatus('修改失败：' + error.message); } finally { button.disabled = false; }
+}
+async function saveGeneratedImage() {
+  if (!state.imageResult) return;
+  try { const saved = await window.desktop.saveGeneratedImage({ dataUrl: state.imageResult }); if (saved?.ok) setImageStatus('已保存：' + saved.path); }
+  catch (error) { setImageStatus('保存失败：' + error.message); }
 }
 
 function setPptStatus(text) {

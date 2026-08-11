@@ -228,6 +228,8 @@ function writeChatLog(message) {
 }
 
 const LLM_HOST = 'cli.15code.com';
+const IMAGE_MODELS = new Set(['gpt-image-2']);
+const MAX_IMAGE_INPUT_BYTES = 20 * 1024 * 1024;
 const MAX_IMPORT_BYTES = 2 * 1024 * 1024;
 const MAX_PPTX_ANALYZE_BYTES = 30 * 1024 * 1024;
 const SUPPORTED_IMPORT_FILTER = {
@@ -452,6 +454,103 @@ function sendChatTextCompletion(_event, { model, messages, maxTokens = 3000 }) {
     req.write(body);
     req.end();
   });
+}
+
+async function imageApiJson(route, options = {}) {
+  const apiKey = loadApiKey();
+  if (!apiKey) throw new Error('图片参数不完整，请重新登录后再试');
+  const response = await fetch(`https://${LLM_HOST}${route}`, {
+    ...options,
+    headers: {
+      'Authorization': 'Bearer ' + apiKey,
+      'User-Agent': `15code-desktop/${app.getVersion()} Electron/${process.versions.electron}`,
+      ...(options.headers || {}),
+    },
+  });
+  const raw = await response.text();
+  let data;
+  try { data = JSON.parse(raw); } catch { data = { error: raw.slice(0, 500) }; }
+  if (!response.ok) {
+    const message = response.status === 403
+      ? '当前账号尚未开通图片权限'
+      : (data.error?.message || data.error || `图片服务 HTTP ${response.status}`);
+    const error = new Error(message);
+    error.status = response.status;
+    throw error;
+  }
+  return data;
+}
+
+function normalizeImageResult(data, format) {
+  const first = data?.data?.[0];
+  if (!first?.b64_json) throw new Error('图片服务没有返回图片数据');
+  const mime = format === 'jpeg' ? 'image/jpeg' : `image/${format}`;
+  return { dataUrl: `data:${mime};base64,${first.b64_json}`, usage: data.usage || null, format };
+}
+
+async function getImageCapabilities() {
+  const data = await imageApiJson('/v1/models');
+  const ids = new Set((data.data || []).map(model => model.id));
+  return { generation: ids.has('gpt-image-2'), editing: ids.has('gpt-image-2') };
+}
+
+async function generateDesktopImage(_event, payload = {}) {
+  const prompt = String(payload.prompt || '').trim();
+  const model = String(payload.model || 'gpt-image-2');
+  const format = ['png', 'jpeg', 'webp'].includes(payload.format) ? payload.format : 'png';
+  if (!prompt || prompt.length > 8000 || !IMAGE_MODELS.has(model)) throw new Error('图片生成参数无效');
+  const data = await imageApiJson('/v1/images/generations', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model, prompt, size: payload.size || '1024x1024', quality: payload.quality || 'low', output_format: format }),
+  });
+  return normalizeImageResult(data, format);
+}
+
+async function selectImageForEdit() {
+  const { canceled, filePaths } = await dialog.showOpenDialog({
+    properties: ['openFile'],
+    filters: [{ name: '图片', extensions: ['png', 'jpg', 'jpeg', 'webp'] }],
+  });
+  if (canceled || !filePaths[0]) return { ok: false };
+  const filePath = path.resolve(filePaths[0]);
+  const stat = await fs.promises.stat(filePath);
+  if (!stat.isFile() || stat.size > MAX_IMAGE_INPUT_BYTES) throw new Error('输入图片无效或超过 20 MB');
+  const extension = path.extname(filePath).toLowerCase();
+  const mime = extension === '.jpg' || extension === '.jpeg' ? 'image/jpeg' : `image/${extension.slice(1)}`;
+  return { ok: true, path: filePath, name: path.basename(filePath), previewUrl: `data:${mime};base64,${(await fs.promises.readFile(filePath)).toString('base64')}` };
+}
+
+async function editDesktopImage(_event, payload = {}) {
+  const prompt = String(payload.prompt || '').trim();
+  const filePath = path.resolve(String(payload.path || ''));
+  const format = ['png', 'jpeg', 'webp'].includes(payload.format) ? payload.format : 'png';
+  if (!prompt || prompt.length > 8000 || !filePath) throw new Error('图片编辑参数无效');
+  const stat = await fs.promises.stat(filePath);
+  if (!stat.isFile() || stat.size > MAX_IMAGE_INPUT_BYTES) throw new Error('输入图片无效或超过 20 MB');
+  const bytes = await fs.promises.readFile(filePath);
+  const form = new FormData();
+  form.append('model', 'gpt-image-2');
+  form.append('prompt', prompt);
+  form.append('size', payload.size || '1024x1024');
+  form.append('quality', payload.quality || 'low');
+  form.append('output_format', format);
+  form.append('image', new Blob([bytes]), path.basename(filePath));
+  const data = await imageApiJson('/v1/images/edits', { method: 'POST', body: form });
+  return normalizeImageResult(data, format);
+}
+
+async function saveGeneratedImage(_event, payload = {}) {
+  const match = String(payload.dataUrl || '').match(/^data:image\/(png|jpeg|webp);base64,([A-Za-z0-9+/=]+)$/);
+  if (!match) throw new Error('图片数据无效');
+  const extension = match[1] === 'jpeg' ? 'jpg' : match[1];
+  const { canceled, filePath } = await dialog.showSaveDialog({
+    defaultPath: `15code-image-${Date.now()}.${extension}`,
+    filters: [{ name: '图片', extensions: [extension] }],
+  });
+  if (canceled || !filePath) return { ok: false };
+  await fs.promises.writeFile(filePath, Buffer.from(match[2], 'base64'));
+  return { ok: true, path: filePath };
 }
 
 function normalizeSlides(slides, topic) {
@@ -902,6 +1001,11 @@ ipcMain.handle('install-update', () => {
 
 ipcMain.handle('chat-completion', sendChatCompletion);
 ipcMain.handle('chat-text-completion', sendChatTextCompletion);
+ipcMain.handle('image:capabilities', getImageCapabilities);
+ipcMain.handle('image:generate', generateDesktopImage);
+ipcMain.handle('image:select-edit', selectImageForEdit);
+ipcMain.handle('image:edit', editDesktopImage);
+ipcMain.handle('image:save', saveGeneratedImage);
 ipcMain.handle('generate-pptx', generatePptx);
 ipcMain.handle('open-pptx-for-analysis', openPptxForAnalysis);
 ipcMain.handle('conversations:save', (_e, data) => saveConversation(data));
