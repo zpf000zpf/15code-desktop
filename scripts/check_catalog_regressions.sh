@@ -57,6 +57,10 @@ grep -q "return 'gpt-image-2';" "$HTML" \
   || fail "PPT visuals must use the public gpt-image-2 image model"
 grep -q 'window.desktop.generateImage' "$HTML" \
   || fail "PPT visuals must use the desktop 15code image client"
+grep -q "clientRequestId: 'ppt-img-' + crypto.randomUUID()" "$HTML" \
+  || fail "PPT visuals must use idempotent 15code image request IDs"
+grep -q "X-Client-Request-Id" "$MAIN" \
+  || fail "Desktop image requests must forward idempotency request IDs"
 if grep -Eqi 'seedream|doubao|ark[.]cn-beijing' "$HTML" "$MAIN"; then
   fail "PPT visuals must not bypass 15code image generation through a separate image provider"
 fi

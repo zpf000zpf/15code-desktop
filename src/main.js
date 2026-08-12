@@ -498,10 +498,12 @@ async function generateDesktopImage(_event, payload = {}) {
   const prompt = String(payload.prompt || '').trim();
   const model = String(payload.model || 'gpt-image-2');
   const format = ['png', 'jpeg', 'webp'].includes(payload.format) ? payload.format : 'png';
+  const clientRequestId = String(payload.clientRequestId || '').trim();
   if (!prompt || prompt.length > 8000 || !IMAGE_MODELS.has(model)) throw new Error('图片生成参数无效');
+  if (clientRequestId && !/^[A-Za-z0-9._:-]{1,128}$/.test(clientRequestId)) throw new Error('图片请求标识无效');
   const data = await imageApiJson('/v1/images/generations', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...(clientRequestId ? { 'X-Client-Request-Id': clientRequestId } : {}) },
     body: JSON.stringify({ model, prompt, size: payload.size || '1024x1024', quality: payload.quality || 'low', output_format: format }),
   });
   return normalizeImageResult(data, format);
@@ -525,7 +527,9 @@ async function editDesktopImage(_event, payload = {}) {
   const prompt = String(payload.prompt || '').trim();
   const filePath = path.resolve(String(payload.path || ''));
   const format = ['png', 'jpeg', 'webp'].includes(payload.format) ? payload.format : 'png';
+  const clientRequestId = String(payload.clientRequestId || '').trim();
   if (!prompt || prompt.length > 8000 || !filePath) throw new Error('图片编辑参数无效');
+  if (clientRequestId && !/^[A-Za-z0-9._:-]{1,128}$/.test(clientRequestId)) throw new Error('图片请求标识无效');
   const stat = await fs.promises.stat(filePath);
   if (!stat.isFile() || stat.size > MAX_IMAGE_INPUT_BYTES) throw new Error('输入图片无效或超过 20 MB');
   const bytes = await fs.promises.readFile(filePath);
@@ -536,7 +540,11 @@ async function editDesktopImage(_event, payload = {}) {
   form.append('quality', payload.quality || 'low');
   form.append('output_format', format);
   form.append('image', new Blob([bytes]), path.basename(filePath));
-  const data = await imageApiJson('/v1/images/edits', { method: 'POST', body: form });
+  const data = await imageApiJson('/v1/images/edits', {
+    method: 'POST',
+    headers: clientRequestId ? { 'X-Client-Request-Id': clientRequestId } : {},
+    body: form,
+  });
   return normalizeImageResult(data, format);
 }
 

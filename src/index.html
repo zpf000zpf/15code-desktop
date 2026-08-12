@@ -1092,7 +1092,7 @@ async function generateImage() {
   if (!options.prompt) return setImageStatus('请输入提示词。');
   const button = document.getElementById('image-generate-btn'); button.disabled = true; setImageStatus('正在生成图片...');
   try {
-    const result = await window.desktop.generateImage({ ...options, model: 'gpt-image-2' });
+    const result = await window.desktop.generateImage({ ...options, model: 'gpt-image-2', clientRequestId: 'desktop-img-' + crypto.randomUUID() });
     state.imageResult = result.dataUrl; renderImagePreview(result.dataUrl);
     document.getElementById('image-save-btn').disabled = false;
     setImageStatus(`生成完成。Token：${Number(result.usage?.total_tokens || 0).toLocaleString()}`);
@@ -1109,7 +1109,7 @@ async function editSelectedImage() {
   const options = imageOptions(); if (!state.imageInputPath || !options.prompt) return setImageStatus('请选择图片并填写修改要求。');
   const button = document.getElementById('image-edit-btn'); button.disabled = true; setImageStatus('正在修改图片...');
   try {
-    const result = await window.desktop.editImage({ ...options, path: state.imageInputPath });
+    const result = await window.desktop.editImage({ ...options, path: state.imageInputPath, clientRequestId: 'desktop-edit-' + crypto.randomUUID() });
     state.imageResult = result.dataUrl; renderImagePreview(result.dataUrl);
     document.getElementById('image-save-btn').disabled = false; setImageStatus('修改完成。');
   } catch (error) { setImageStatus('修改失败：' + error.message); } finally { button.disabled = false; }
@@ -1278,7 +1278,7 @@ async function regeneratePptImage(index) {
   try {
     setPptStatus(`正在通过 15code 图片服务重做第 ${index + 1} 页配图...`);
     const prompt = buildPptImagePrompt(slide, index, topic, style, scenario);
-    const result = await window.desktop.generateImage({ model, prompt, size: '1536x1024', quality, format: 'png' });
+    const result = await window.desktop.generateImage({ model, prompt, size: '1536x1024', quality, format: 'png', clientRequestId: 'ppt-img-' + crypto.randomUUID() });
     if (!result?.dataUrl) throw new Error('图片服务没有返回图片数据');
     state.pptImages[index] = { index, dataUrl: result.dataUrl, model, prompt, usage: result.usage || null };
     renderPptSlides();
@@ -1424,6 +1424,7 @@ async function generatePptImages() {
         size: '1536x1024',
         quality,
         format: 'png',
+        clientRequestId: 'ppt-img-' + crypto.randomUUID(),
       });
       if (!result?.dataUrl) throw new Error(`第 ${position + 1} 张配图没有返回图片数据`);
       const image = { index: item.index, dataUrl: result.dataUrl, model, prompt: item.prompt, usage: result.usage || null };
