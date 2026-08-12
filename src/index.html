@@ -709,6 +709,7 @@ const state = {
   attachments: [],     // [{name, content}]
   pptSlides: [],
   pptImages: {},       // slideIndex -> { dataUrl, model, prompt }
+  pptImported: null,
   imageInputPath: null,
   imageResult: null,
   streaming: false,
@@ -1168,6 +1169,22 @@ function normalizePptSlidesFromAi(data, topic, count) {
   return normalized.length ? normalized.slice(0, count) : buildFallbackPptSlides(topic, count);
 }
 
+function buildPptSlidesFromImported(info, topic) {
+  const imported = Array.isArray(info?.slides) ? info.slides : [];
+  const slides = imported.map((item, index) => {
+    const fragments = String(item?.text || '').split('|').map(value => value.trim()).filter(Boolean);
+    const title = fragments.shift() || `第 ${index + 1} 页`;
+    return {
+      title: title.slice(0, 48),
+      subtitle: index === 0 ? '基于原始 PPT 的可编辑优化稿' : '',
+      bullets: fragments.slice(0, 5).map(value => value.slice(0, 80)),
+      visualType: index === 0 ? 'cover' : index === imported.length - 1 ? 'closing' : 'content',
+      notes: '基于原始页面内容重构；请在导出前确认事实、数字和专有名词。',
+    };
+  }).filter(slide => slide.title);
+  return slides.length ? slides : buildFallbackPptSlides(topic, 8);
+}
+
 function getPptImageModel() {
   const engine = document.getElementById('ppt-image-engine').value;
   if (engine === 'none') return '';
@@ -1452,21 +1469,33 @@ async function analyzePptx() {
       setPptStatus('已取消分析');
       return;
     }
+    state.pptImported = info;
+    const topic = document.getElementById('ppt-topic').value.trim() || info.name.replace(/\.pptx$/i, '');
+    const scenario = document.getElementById('ppt-scenario').value;
+    const style = document.getElementById('ppt-style').value;
     const compact = info.slides.map(s => `第${s.index}页：${s.text || '(无文本)'}`).join('\n').slice(0, 12000);
     let report = `文件：${info.name}\n页数：${info.slideCount}\n大小：${(info.size / 1024 / 1024).toFixed(2)} MB\n\n`;
     if (state.apiCredentialReady && state.currentModel && window.desktop?.chatTextCompletion) {
-      setPptStatus('正在生成美化诊断...');
+      setPptStatus('正在生成美化诊断和可编辑优化稿...');
       const result = await window.desktop.chatTextCompletion({
         model: state.currentModel,
         maxTokens: 2600,
-        messages: [{ role: 'user', content: `你是 PPT 美化顾问。请基于以下 PPT 文本，输出结构化诊断，包含：1 逻辑问题 2 标题优化 3 页面压缩建议 4 视觉风格建议 5 可执行修改清单。\n\n${compact}` }],
+        messages: [{ role: 'user', content: `你是 PPT 美化顾问。请基于以下 PPT 文本生成诊断和一份新的可编辑优化稿。只返回 JSON，不要解释。
+JSON 格式：{"report":"", "slides":[{"title":"","subtitle":"","bullets":[""],"visualType":"cover|content|process|matrix|timeline|chart|closing","notes":""}]}
+要求：report 包含 1 逻辑问题 2 标题优化 3 页面压缩建议 4 视觉风格建议 5 可执行修改清单；slides 保留事实但重构表达，标题结论化，每页不超过 5 个要点。场景=${scenario}，风格=${style}，主题=${topic}。
+原始 PPT 文本：\n${compact}` }],
       });
-      report += result.content || '';
+      const optimized = extractJsonObject(result.content);
+      report += String(optimized.report || result.content || '未返回诊断。');
+      state.pptSlides = normalizePptSlidesFromAi(optimized, topic, Math.max(2, Math.min(15, info.slideCount || 10)));
     } else {
       report += '未连接 AI，仅完成文本读取。建议：检查标题是否结论化、每页要点是否超过 5 条、章节之间是否有明确递进关系。';
+      state.pptSlides = buildPptSlidesFromImported(info, topic);
     }
+    state.pptImages = {};
+    renderPptSlides();
     document.getElementById('ppt-report').textContent = report;
-    setPptStatus('诊断完成');
+    setPptStatus('诊断完成，已生成新的可编辑优化稿草案；原始 PPT 未修改。可生成配图后另存导出。');
   } catch (e) {
     setPptStatus('分析失败：' + e.message);
   } finally {
