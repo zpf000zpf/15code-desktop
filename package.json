@@ -9,9 +9,9 @@
   "scripts": {
     "start": "electron .",
     "dev": "electron . --dev",
-    "build:win": "electron-builder --win --x64",
+    "build:win": "electron-builder --win --x64 --publish never",
     "build:mac": "electron-builder --mac",
-    "build:linux": "electron-builder --linux"
+    "build:linux": "electron-builder --linux --publish never"
   },
   "devDependencies": {
     "electron": "^43.2.0",
@@ -63,7 +63,8 @@
         "AppImage"
       ],
       "category": "Office",
-      "artifactName": "15code-desktop-${version}.${ext}"
+      "artifactName": "15code-desktop-${version}.${ext}",
+      "syncDesktopName": true
     },
     "publish": {
       "provider": "github",
