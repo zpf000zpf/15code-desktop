@@ -53,6 +53,13 @@ grep -q '当前账号尚未开通图片权限' "$MAIN" \
 if grep -q 'gpt-image-1.5' "$MAIN" "$HTML"; then
   fail "Desktop must not expose the unpriced gpt-image-1.5 alias"
 fi
+grep -q "return 'gpt-image-2';" "$HTML" \
+  || fail "PPT visuals must use the public gpt-image-2 image model"
+grep -q 'window.desktop.generateImage' "$HTML" \
+  || fail "PPT visuals must use the desktop 15code image client"
+if grep -Eqi 'seedream|doubao|ark[.]cn-beijing' "$HTML" "$MAIN"; then
+  fail "PPT visuals must not bypass 15code image generation through a separate image provider"
+fi
 
 node - "$HTML" <<'NODE'
 const fs = require('fs');

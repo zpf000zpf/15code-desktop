@@ -628,10 +628,10 @@ button, input, select, textarea {
           <textarea id="ppt-revision" placeholder="例如：压缩到 8 页、改成投资人风格、突出价格优势、每页标题更有结论。"></textarea>
         </div>
         <div class="ppt-field">
-          <label>图片引擎</label>
+          <label>15code 图片质量</label>
           <select id="ppt-image-engine">
-            <option value="seedream-4.5">Seedream 4.5 高清</option>
-            <option value="seedream-4.0">Seedream 4.0 快速</option>
+            <option value="high">高清（适合封面和正式交付）</option>
+            <option value="medium">标准（适合常规页面）</option>
             <option value="none">不生成图片</option>
           </select>
         </div>
@@ -639,6 +639,7 @@ button, input, select, textarea {
           <button class="ppt-btn primary" id="ppt-outline-btn" onclick="generatePptOutline()">生成大纲</button>
           <button class="ppt-btn" id="ppt-revise-btn" onclick="revisePptOutline()">按要求修改</button>
           <button class="ppt-btn" id="ppt-image-btn" onclick="generatePptImages()">生成配图</button>
+          <button class="ppt-btn" id="ppt-quality-btn" onclick="checkPptQuality()">质量检查</button>
           <button class="ppt-btn" id="ppt-export-btn" onclick="exportPptx()">导出 PPTX</button>
           <button class="ppt-btn" id="ppt-analyze-btn" onclick="analyzePptx()">美化已有 PPT</button>
         </div>
@@ -1169,9 +1170,8 @@ function normalizePptSlidesFromAi(data, topic, count) {
 
 function getPptImageModel() {
   const engine = document.getElementById('ppt-image-engine').value;
-  if (engine === 'seedream-4.0') return 'doubao-seedream-4-0-250828';
   if (engine === 'none') return '';
-  return 'doubao-seedream-4-5-251128';
+  return 'gpt-image-2';
 }
 
 function buildPptImagePrompt(slide, index, topic, style, scenario) {
@@ -1212,9 +1212,63 @@ function renderPptSlides() {
       <h4>${escapeHtml(slide.title)}</h4>
       ${slide.subtitle ? `<div style="color:var(--text-muted);font-size:12px;margin-bottom:8px">${escapeHtml(slide.subtitle)}</div>` : ''}
       <ul>${(slide.bullets || []).map(b => `<li>${escapeHtml(b)}</li>`).join('')}</ul>
+      <button class="ppt-btn" style="margin-top:8px" onclick="regeneratePptImage(${i})">重做本页配图</button>
     `;
     box.appendChild(card);
   });
+}
+
+function pptQualityReport(slides) {
+  const issues = [];
+  const titles = new Map();
+  slides.forEach((slide, index) => {
+    const page = index + 1;
+    const title = String(slide.title || '').trim();
+    if (!title) issues.push(`第 ${page} 页没有标题。`);
+    if (title.length > 32) issues.push(`第 ${page} 页标题过长（${title.length} 字），建议压缩为结论句。`);
+    if ((slide.bullets || []).length > 5) issues.push(`第 ${page} 页要点超过 5 条。`);
+    (slide.bullets || []).forEach((bullet, bulletIndex) => {
+      if (String(bullet).trim().length > 46) issues.push(`第 ${page} 页第 ${bulletIndex + 1} 条过长，导出时可能拥挤。`);
+    });
+    const key = title.replace(/\s+/g, '').toLowerCase();
+    if (key) {
+      if (titles.has(key)) issues.push(`第 ${page} 页标题与第 ${titles.get(key)} 页重复。`);
+      else titles.set(key, page);
+    }
+  });
+  if (!slides.length) issues.push('还没有可检查的页面。');
+  return issues;
+}
+
+function checkPptQuality() {
+  const issues = pptQualityReport(state.pptSlides);
+  const report = issues.length
+    ? `导出前发现 ${issues.length} 项可优化内容：\n${issues.map((issue, index) => `${index + 1}. ${issue}`).join('\n')}`
+    : '质量检查通过：标题、页数、要点数量和重复项均符合当前基础规则。';
+  document.getElementById('ppt-report').textContent = report;
+  setPptStatus(issues.length ? `质量检查完成：发现 ${issues.length} 项可优化内容。` : '质量检查通过，可以导出 PPTX。');
+  return issues;
+}
+
+async function regeneratePptImage(index) {
+  const slide = state.pptSlides[index];
+  const model = getPptImageModel();
+  const quality = document.getElementById('ppt-image-engine').value;
+  if (!slide || !model) return setPptStatus('请先启用 15code 图片生成。');
+  const topic = document.getElementById('ppt-topic').value.trim() || '15code PPT Studio';
+  const scenario = document.getElementById('ppt-scenario').value;
+  const style = document.getElementById('ppt-style').value;
+  try {
+    setPptStatus(`正在通过 15code 图片服务重做第 ${index + 1} 页配图...`);
+    const prompt = buildPptImagePrompt(slide, index, topic, style, scenario);
+    const result = await window.desktop.generateImage({ model, prompt, size: '1536x1024', quality, format: 'png' });
+    if (!result?.dataUrl) throw new Error('图片服务没有返回图片数据');
+    state.pptImages[index] = { index, dataUrl: result.dataUrl, model, prompt, usage: result.usage || null };
+    renderPptSlides();
+    setPptStatus(`第 ${index + 1} 页配图已重做。`);
+  } catch (error) {
+    setPptStatus(`第 ${index + 1} 页配图重做失败：${error.message}`);
+  }
 }
 
 async function generatePptOutline() {
@@ -1318,6 +1372,7 @@ async function generatePptImages() {
   const scenario = document.getElementById('ppt-scenario').value;
   const style = document.getElementById('ppt-style').value;
   const model = getPptImageModel();
+  const quality = document.getElementById('ppt-image-engine').value;
   if (!model) {
     setPptStatus('已选择不生成图片。');
     return;
@@ -1338,20 +1393,28 @@ async function generatePptImages() {
   }));
 
   btn.disabled = true;
-  setPptStatus(`正在生成 ${prompts.length} 张 PPT 配图...`);
+  setPptStatus(`正在通过 15code 图片服务生成 ${prompts.length} 张 PPT 配图...`);
   try {
-    const result = await fetchJson(PLATFORM + '/api/ppt/images', {
-      method: 'POST',
-      body: JSON.stringify({ model, prompts, style, size: model.includes('4-5') ? '2560x1440' : '1280x720' }),
-    });
-    const images = result.images || [];
-    for (const image of images) {
-      if (typeof image.index === 'number' && image.dataUrl) {
-        state.pptImages[image.index] = { dataUrl: image.dataUrl, model: image.model || model, prompt: prompts[image.index]?.prompt || '' };
-      }
+    const images = [];
+    // 顺序提交：每张图均经由用户自己的 15code API Key、权限和图片预约计费
+    // 链路；避免一次并发 15 张造成重复扣费、账户限流或浏览器内存突刺。
+    for (let position = 0; position < prompts.length; position += 1) {
+      const item = prompts[position];
+      setPptStatus(`正在通过 15code 图片服务生成第 ${position + 1}/${prompts.length} 张配图...`);
+      const result = await window.desktop.generateImage({
+        model,
+        prompt: item.prompt,
+        size: '1536x1024',
+        quality,
+        format: 'png',
+      });
+      if (!result?.dataUrl) throw new Error(`第 ${position + 1} 张配图没有返回图片数据`);
+      const image = { index: item.index, dataUrl: result.dataUrl, model, prompt: item.prompt, usage: result.usage || null };
+      images.push(image);
+      state.pptImages[image.index] = image;
+      renderPptSlides();
     }
-    renderPptSlides();
-    setPptStatus(`已生成 ${images.length} 张配图，可直接导出 PPTX。`);
+    setPptStatus(`已通过 15code 图片服务生成 ${images.length} 张配图，可直接导出 PPTX。`);
   } catch (e) {
     setPptStatus('生成配图失败：' + e.message);
   } finally {
@@ -1364,7 +1427,13 @@ async function exportPptx() {
   const scenario = document.getElementById('ppt-scenario').value;
   const style = document.getElementById('ppt-style').value;
   if (!state.pptSlides.length) state.pptSlides = buildFallbackPptSlides(topic, Number(document.getElementById('ppt-page-count').value || 10));
-  setPptStatus('正在生成 PPTX...');
+  const issues = checkPptQuality();
+  const blockers = state.pptSlides.filter(slide => !String(slide.title || '').trim()).length;
+  if (blockers) {
+    setPptStatus(`有 ${blockers} 页缺少标题，无法导出 PPTX。`);
+    return;
+  }
+  setPptStatus(issues.length ? `发现 ${issues.length} 项可优化内容，仍将导出可编辑 PPTX...` : '正在生成 PPTX...');
   try {
     const result = await window.desktop.generatePptx({ topic, scenario, style, slides: state.pptSlides, slideImages: state.pptImages });
     setPptStatus(result.ok ? `已导出 ${result.slides} 页：${result.path}` : '已取消导出');
