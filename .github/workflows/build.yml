@@ -14,7 +14,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest]
+        os: [windows-latest, ubuntu-latest]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -71,6 +71,10 @@ jobs:
           CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CSC_KEY_PASSWORD }}
           CSC_IDENTITY_AUTO_DISCOVERY: ${{ steps.signing.outputs.available }}
 
+      - name: Build Linux AppImage
+        if: matrix.os == 'ubuntu-latest'
+        run: npm run build:linux
+
       - name: Verify Windows signature
         if: matrix.os == 'windows-latest' && steps.signing.outputs.available == 'true'
         shell: pwsh
@@ -95,12 +99,22 @@ jobs:
           $hash = Get-FileHash $installer.FullName -Algorithm SHA256
           "SHA256 $($hash.Hash)  $($installer.Name)" | Tee-Object -FilePath "dist/$($installer.BaseName).sha256"
 
+      - name: Verify Linux AppImage
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: |
+          appimage=$(find dist -maxdepth 1 -type f -name '*.AppImage' | head -n 1)
+          test -n "$appimage"
+          test -s "$appimage"
+          sha256sum "$appimage" | tee "${appimage}.sha256"
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: 15code-desktop-${{ matrix.os }}
           path: |
             dist/*.exe
+            dist/*.AppImage
             dist/*.yml
             dist/*.blockmap
             dist/*.sha256
@@ -111,6 +125,7 @@ jobs:
         with:
           files: |
             dist/*.exe
+            dist/*.AppImage
             dist/*.yml
             dist/*.blockmap
             dist/*.sha256
