@@ -1,5 +1,12 @@
 # 15code Desktop
 
+## PPT Studio
+
+PPT Studio follows a staged workflow: generate an editable outline, revise it, use the same
+15code `gpt-image-2` image service to create or redo individual slide visuals, run a lightweight
+quality check, then export an editable PPTX. It does not use a separate image provider or a manual
+PPT image billing path; normal image permission, reservation, failure-release and Usage rules apply.
+
 > **15code 桌面客户端 v1.0.12** — 无需 API key，登录即用
 > Windows · macOS · Linux 跨平台 · 由 [15code](https://15code.com) 出品
 
