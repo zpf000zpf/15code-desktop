@@ -494,6 +494,12 @@ async function getImageCapabilities() {
   return { generation: ids.has('gpt-image-2'), editing: ids.has('gpt-image-2') };
 }
 
+// 图片报价属于平台账户数据。通过主进程使用登录态请求，避免把 session token
+// 暴露给渲染层，也不把平台 API 认证交给图片转发服务处理。
+async function getImagePricing() {
+  return platformJson('/api/image-pricing');
+}
+
 async function generateDesktopImage(_event, payload = {}) {
   const prompt = String(payload.prompt || '').trim();
   const model = String(payload.model || 'gpt-image-2');
@@ -1010,6 +1016,7 @@ ipcMain.handle('install-update', () => {
 ipcMain.handle('chat-completion', sendChatCompletion);
 ipcMain.handle('chat-text-completion', sendChatTextCompletion);
 ipcMain.handle('image:capabilities', getImageCapabilities);
+ipcMain.handle('image:pricing', getImagePricing);
 ipcMain.handle('image:generate', generateDesktopImage);
 ipcMain.handle('image:select-edit', selectImageForEdit);
 ipcMain.handle('image:edit', editDesktopImage);
