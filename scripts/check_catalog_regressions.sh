@@ -59,12 +59,12 @@ grep -q 'window.desktop.generateImage' "$HTML" \
   || fail "PPT visuals must use the desktop 15code image client"
 grep -q "clientRequestId: 'ppt-img-' + crypto.randomUUID()" "$HTML" \
   || fail "PPT visuals must use idempotent 15code image request IDs"
-grep -q "imagePricing: () => ipcRenderer.invoke('image:pricing')" "$PRELOAD" \
-  || fail "Desktop must fetch authenticated image pricing through the main process"
-grep -q "platformJson('/api/image-pricing')" "$MAIN" \
-  || fail "Desktop image pricing must use the platform account session"
-grep -q '实际扣费以服务端结算为准' "$HTML" \
-  || fail "Desktop must explain that image settlement is server authoritative"
+if grep -q 'image:pricing\|/api/image-pricing' "$PRELOAD" "$MAIN"; then
+  fail "Desktop must not fetch image pricing for display"
+fi
+if grep -q 'image-pricing\|图片价格\|价格来源：OpenRouter\|单次最大预约' "$HTML"; then
+  fail "Desktop must not display image pricing prompts"
+fi
 grep -q "X-Client-Request-Id" "$MAIN" \
   || fail "Desktop image requests must forward idempotency request IDs"
 if grep -Eqi 'seedream|doubao|ark[.]cn-beijing' "$HTML" "$MAIN"; then

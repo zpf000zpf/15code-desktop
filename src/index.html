@@ -514,7 +514,7 @@ button, input, select, textarea {
   padding: 14px;
   color: var(--text-secondary);
 }
-.image-studio{flex:1;overflow:auto;padding:24px;display:none}.image-shell{max-width:1080px;margin:auto;display:grid;grid-template-columns:360px 1fr;gap:20px}.image-panel{background:var(--bg-card);border:1px solid var(--border);border-radius:14px;padding:20px}.image-panel h2{margin:0 0 6px}.image-field{margin:14px 0}.image-field label{display:block;color:var(--text-muted);font-size:12px;margin-bottom:6px}.image-field textarea,.image-field select{width:100%;box-sizing:border-box;background:var(--bg-elevated);color:var(--text-primary);border:1px solid var(--border);border-radius:8px;padding:10px}.image-field textarea{min-height:110px;resize:vertical}.image-actions{display:flex;flex-wrap:wrap;gap:8px}.image-actions button{background:var(--accent);color:#fff;border:0;border-radius:8px;padding:9px 13px;cursor:pointer}.image-actions button.secondary{background:var(--bg-elevated);color:var(--text-primary);border:1px solid var(--border)}.image-actions button:disabled{opacity:.5;cursor:wait}.image-preview{min-height:420px;display:flex;align-items:center;justify-content:center;background:var(--bg-secondary);border:1px dashed var(--border);border-radius:12px;overflow:hidden}.image-preview img{max-width:100%;max-height:620px;object-fit:contain}.image-status{margin-top:12px;color:var(--text-muted);font-size:13px;white-space:pre-wrap}.image-pricing{margin-top:10px;padding:9px 10px;border:1px solid var(--border);border-radius:8px;color:var(--text-muted);font-size:12px;line-height:1.55;background:var(--bg-secondary)}
+.image-studio{flex:1;overflow:auto;padding:24px;display:none}.image-shell{max-width:1080px;margin:auto;display:grid;grid-template-columns:360px 1fr;gap:20px}.image-panel{background:var(--bg-card);border:1px solid var(--border);border-radius:14px;padding:20px}.image-panel h2{margin:0 0 6px}.image-field{margin:14px 0}.image-field label{display:block;color:var(--text-muted);font-size:12px;margin-bottom:6px}.image-field textarea,.image-field select{width:100%;box-sizing:border-box;background:var(--bg-elevated);color:var(--text-primary);border:1px solid var(--border);border-radius:8px;padding:10px}.image-field textarea{min-height:110px;resize:vertical}.image-actions{display:flex;flex-wrap:wrap;gap:8px}.image-actions button{background:var(--accent);color:#fff;border:0;border-radius:8px;padding:9px 13px;cursor:pointer}.image-actions button.secondary{background:var(--bg-elevated);color:var(--text-primary);border:1px solid var(--border)}.image-actions button:disabled{opacity:.5;cursor:wait}.image-preview{min-height:420px;display:flex;align-items:center;justify-content:center;background:var(--bg-secondary);border:1px dashed var(--border);border-radius:12px;overflow:hidden}.image-preview img{max-width:100%;max-height:620px;object-fit:contain}.image-status{margin-top:12px;color:var(--text-muted);font-size:13px;white-space:pre-wrap}
 </style>
 </head>
 <body>
@@ -576,7 +576,6 @@ button, input, select, textarea {
           <button class="secondary" id="image-edit-btn" onclick="editSelectedImage()" disabled>执行修改</button>
           <button class="secondary" id="image-save-btn" onclick="saveGeneratedImage()" disabled>保存图片</button>
         </div>
-        <div class="image-pricing" id="image-pricing">正在读取图片价格说明…</div>
         <div class="image-status" id="image-status"></div>
       </div>
       <div class="image-panel"><div class="image-preview" id="image-preview"><span>生成结果或待修改图片将在这里显示</span></div></div>
@@ -645,7 +644,6 @@ button, input, select, textarea {
           <button class="ppt-btn" id="ppt-analyze-btn" onclick="analyzePptx()">美化已有 PPT</button>
         </div>
         <div class="ppt-status" id="ppt-status"></div>
-        <div class="image-pricing" id="ppt-image-pricing">图片价格将在启用配图后显示。</div>
       </div>
       <div class="ppt-output">
         <div class="ppt-panel">
@@ -718,7 +716,6 @@ const state = {
   currentRequestId: null,
   stopRequested: false,
   streamAbortController: null,
-  imagePricing: null,
 };
 let balanceRefreshTimer = null;
 let draftSaveTimer = null;
@@ -1060,7 +1057,6 @@ function showPptStudio() {
   document.querySelector('.input-area').style.display = 'none';
   document.getElementById('ppt-studio').style.display = 'block';
   document.getElementById('ppt-topic').focus();
-  loadImagePricing();
   if (!state.pptSlides.length) {
     state.pptSlides = buildFallbackPptSlides(
       document.getElementById('ppt-topic').value.trim() || '15code PPT Studio',
@@ -1076,35 +1072,10 @@ async function showImageStudio() {
   document.getElementById('ppt-studio').style.display = 'none';
   document.getElementById('image-studio').style.display = 'block';
   document.getElementById('image-prompt').focus();
-  loadImagePricing();
   try {
     const capabilities = await window.desktop.imageCapabilities();
     setImageStatus(capabilities.generation ? '图片服务已连接。' : '当前账号尚未开通图片权限。');
   } catch (error) { setImageStatus(error.message); }
-}
-
-function imagePricingText(pricing) {
-  const snapshot = (pricing?.snapshots || []).find(row => row.modelId === 'gpt-image-2' && row.operation === 'generation')
-    || (pricing?.snapshots || []).find(row => row.modelId === 'gpt-image-2');
-  if (!snapshot) return '暂未取得图片价格快照；提交前将由服务端按当前规则校验和结算。';
-  const when = snapshot.effectiveAt || snapshot.fetchedAt;
-  const max = Number(snapshot.maxReservationCredits || 0) / 1_000_000;
-  const time = when ? new Date(when).toLocaleString('zh-CN', { hour12: false }) : '未知';
-  return `价格来源：OpenRouter；快照时间：${time}；单次最大预约：${max.toFixed(4)} USD。实际扣费以服务端结算为准。`;
-}
-async function loadImagePricing() {
-  const imageBox = document.getElementById('image-pricing');
-  const pptBox = document.getElementById('ppt-image-pricing');
-  try {
-    state.imagePricing = await window.desktop.imagePricing();
-    const value = imagePricingText(state.imagePricing);
-    if (imageBox) imageBox.textContent = value;
-    if (pptBox) pptBox.textContent = value;
-  } catch (_) {
-    const value = '图片价格暂不可读取；实际扣费仍由服务端统一结算。';
-    if (imageBox) imageBox.textContent = value;
-    if (pptBox) pptBox.textContent = value;
-  }
 }
 
 function setImageStatus(message) { document.getElementById('image-status').textContent = message || ''; }

@@ -14,7 +14,6 @@ contextBridge.exposeInMainWorld('desktop', {
   chatCompletion: (data) => ipcRenderer.invoke('chat-completion', data),
   chatTextCompletion: (data) => ipcRenderer.invoke('chat-text-completion', data),
   imageCapabilities: () => ipcRenderer.invoke('image:capabilities'),
-  imagePricing: () => ipcRenderer.invoke('image:pricing'),
   generateImage: (data) => ipcRenderer.invoke('image:generate', data),
   selectImageForEdit: () => ipcRenderer.invoke('image:select-edit'),
   editImage: (data) => ipcRenderer.invoke('image:edit', data),
