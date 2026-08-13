@@ -29,6 +29,7 @@
       "package.json"
     ],
     "win": {
+      "icon": "build/icon.ico",
       "target": [
         {
           "target": "nsis",
@@ -46,6 +47,7 @@
       "shortcutName": "15code"
     },
     "mac": {
+      "icon": "build/icon.png",
       "target": [
         {
           "target": "dmg",
@@ -59,6 +61,7 @@
       "artifactName": "15code-desktop-${version}-${arch}.${ext}"
     },
     "linux": {
+      "icon": "build/icon.png",
       "target": [
         "AppImage"
       ],
