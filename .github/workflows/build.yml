@@ -109,7 +109,7 @@ jobs:
           sha256sum "$appimage" | tee "${appimage}.sha256"
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: 15code-desktop-${{ matrix.os }}
           path: |
