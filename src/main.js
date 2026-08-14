@@ -1128,6 +1128,13 @@ async function editDesktopImage(_event, payload = {}) {
   if (clientRequestId && !/^[A-Za-z0-9._:-]{1,128}$/.test(clientRequestId)) throw new Error('图片请求标识无效');
   const stat = await fs.promises.stat(filePath);
   if (!stat.isFile() || stat.size > MAX_IMAGE_INPUT_BYTES) throw new Error('输入图片无效或超过 20 MB');
+  const extension = path.extname(filePath).toLowerCase();
+  const mime = extension === '.jpg' || extension === '.jpeg'
+    ? 'image/jpeg'
+    : extension === '.png' || extension === '.webp'
+      ? `image/${extension.slice(1)}`
+      : '';
+  if (!mime) throw new Error('仅支持 PNG、JPEG 或 WebP 图片');
   const bytes = await fs.promises.readFile(filePath);
   const form = new FormData();
   form.append('model', 'gpt-image-2');
@@ -1135,7 +1142,9 @@ async function editDesktopImage(_event, payload = {}) {
   form.append('size', payload.size || '1024x1024');
   form.append('quality', payload.quality || 'low');
   form.append('output_format', format);
-  form.append('image', new Blob([bytes]), path.basename(filePath));
+  // Node's Blob defaults to application/octet-stream. The Images API rejects
+  // that generic MIME type even when the filename has a valid image suffix.
+  form.append('image', new Blob([bytes], { type: mime }), path.basename(filePath));
   const data = await imageApiJson('/v1/images/edits', {
     method: 'POST',
     headers: clientRequestId ? { 'X-Client-Request-Id': clientRequestId } : {},
