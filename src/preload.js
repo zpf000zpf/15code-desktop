@@ -18,12 +18,22 @@ contextBridge.exposeInMainWorld('desktop', {
   selectImageForEdit: () => ipcRenderer.invoke('image:select-edit'),
   editImage: (data) => ipcRenderer.invoke('image:edit', data),
   saveGeneratedImage: (data) => ipcRenderer.invoke('image:save', data),
+  selectChatImage: (data) => ipcRenderer.invoke('chat-image:select', data),
+  generateChatImage: (data) => ipcRenderer.invoke('chat-image:generate', data),
+  editChatImage: (data) => ipcRenderer.invoke('chat-image:edit', data),
+  saveChatImage: (data) => ipcRenderer.invoke('chat-image:save', data),
   generatePptx: (data) => ipcRenderer.invoke('generate-pptx', data),
   openPptxForAnalysis: () => ipcRenderer.invoke('open-pptx-for-analysis'),
   saveConversation: (data) => ipcRenderer.invoke('conversations:save', data),
   loadConversation: (id) => ipcRenderer.invoke('conversations:load', id),
   listConversations: (options) => ipcRenderer.invoke('conversations:list', options),
   updateConversation: (data) => ipcRenderer.invoke('conversations:update', data),
+  onPrepareToQuit: (handler) => {
+    const listener = () => { void handler(); };
+    ipcRenderer.on('app:prepare-to-quit', listener);
+    return () => ipcRenderer.removeListener('app:prepare-to-quit', listener);
+  },
+  acknowledgeQuitFlush: () => ipcRenderer.invoke('app:quit-flush-ack'),
   onUpdateStatus: (handler) => {
     const listener = (_e, payload) => handler(payload);
     ipcRenderer.on('update-status', listener);

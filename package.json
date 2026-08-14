@@ -7,6 +7,7 @@
   "license": "Apache-2.0",
   "homepage": "https://15code.com",
   "scripts": {
+    "test": "node scripts/test-chat-image-shutdown.js && bash scripts/check_catalog_regressions.sh",
     "start": "electron .",
     "dev": "electron . --dev",
     "build:win": "electron-builder --win --x64 --publish never",
