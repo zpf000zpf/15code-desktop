@@ -107,7 +107,12 @@ jobs:
           appimage=$(find dist -maxdepth 1 -type f -name '*.AppImage' | head -n 1)
           test -n "$appimage"
           test -s "$appimage"
-          sha256sum "$appimage" | tee "${appimage}.sha256"
+          artifact=$(basename "$appimage")
+          (
+            cd dist
+            sha256sum "$artifact" | tee "${artifact}.sha256"
+            sha256sum -c "${artifact}.sha256"
+          )
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7
