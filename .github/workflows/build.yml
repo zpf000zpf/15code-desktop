@@ -97,8 +97,20 @@ jobs:
           if ($signature.Status -ne 'NotSigned') {
             throw "Expected an unsigned Beta installer, got: $($signature.Status)"
           }
+
+      - name: Create Windows checksum
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem dist/*.exe | Select-Object -First 1
+          if (-not $installer) { throw 'Windows installer was not produced' }
           $hash = Get-FileHash $installer.FullName -Algorithm SHA256
-          "SHA256 $($hash.Hash)  $($installer.Name)" | Tee-Object -FilePath "dist/$($installer.BaseName).sha256"
+          $checksum = "$($hash.Hash.ToLowerInvariant())  $($installer.Name)"
+          $checksumPath = Join-Path $installer.DirectoryName "$($installer.Name).sha256"
+          Set-Content -Path $checksumPath -Value $checksum -Encoding ascii
+          if ((Get-Content $checksumPath -Raw).Trim() -ne $checksum) {
+            throw 'Windows checksum file verification failed'
+          }
 
       - name: Verify Linux AppImage
         if: matrix.os == 'ubuntu-latest'
