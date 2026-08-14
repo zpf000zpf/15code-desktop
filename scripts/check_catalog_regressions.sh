@@ -31,8 +31,8 @@ fi
 if grep -q 'state.apiKey' "$HTML" || grep -q 'apiKey:' "$HTML"; then
   fail "Renderer must never hold or pass the API Key"
 fi
-grep -q "safeStorage.encryptString(apiKey)" "$MAIN" \
-  || fail "API Key must be encrypted in the main process"
+grep -q "saveCredential('api-key', apiKey)" "$MAIN" \
+  || fail "API Key must use the main-process secure credential store"
 grep -q "require('node:sqlite')" "$MAIN" \
   || fail "Desktop multi-session storage must use SQLite"
 grep -q "conversations:list" "$MAIN" \
@@ -67,6 +67,16 @@ if grep -q 'image-pricing\|图片价格\|价格来源：OpenRouter\|单次最大
 fi
 grep -q "X-Client-Request-Id" "$MAIN" \
   || fail "Desktop image requests must forward idempotency request IDs"
+grep -q "protocol.handle(CHAT_IMAGE_PROTOCOL, serveChatImageAsset)" "$MAIN" \
+  || fail "Chat images must be served through the private Electron protocol"
+grep -q "hasExpectedImageSignature(asset.mime, bytes)" "$MAIN" \
+  || fail "Chat image protocol must reject corrupted or mismatched files"
+grep -q "status: 'error'" "$HTML" \
+  || fail "Failed chat image operations must retain a recoverable error card"
+grep -q "image.status === 'complete'" "$HTML" \
+  || fail "Chat image actions must be limited to complete assets"
+grep -q "messages.*client_id\|client_id.*messages" "$MAIN" \
+  || fail "Chat image persistence must retain stable message client IDs"
 if grep -Eqi 'seedream|doubao|ark[.]cn-beijing' "$HTML" "$MAIN"; then
   fail "PPT visuals must not bypass 15code image generation through a separate image provider"
 fi

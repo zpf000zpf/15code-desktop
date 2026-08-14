@@ -23,12 +23,13 @@ jobs:
       - name: Install deps
         run: npm ci
 
-      - name: Catalog, credential and SQLite regression gate
+      - name: Catalog, image-state, credential and SQLite regression gate
         shell: bash
         run: |
-          bash scripts/check_catalog_regressions.sh
+          npm test
           node --check src/main.js
           node --check src/preload.js
+          node --check src/chat-image-state.js
           node - <<'NODE'
           (async () => {
             const response = await fetch('https://15code.com/api/catalog');
@@ -99,14 +100,19 @@ jobs:
           $hash = Get-FileHash $installer.FullName -Algorithm SHA256
           "SHA256 $($hash.Hash)  $($installer.Name)" | Tee-Object -FilePath "dist/$($installer.BaseName).sha256"
 
-      - name: Verify Linux AppImage
+      - name: Verify Linux packages
         if: matrix.os == 'ubuntu-latest'
         shell: bash
         run: |
           appimage=$(find dist -maxdepth 1 -type f -name '*.AppImage' | head -n 1)
+          deb=$(find dist -maxdepth 1 -type f -name '*.deb' | head -n 1)
           test -n "$appimage"
           test -s "$appimage"
+          test -n "$deb"
+          test -s "$deb"
+          dpkg-deb -f "$deb" Depends | grep -Eq '(^|, )libsecret-tools(,|$)'
           sha256sum "$appimage" | tee "${appimage}.sha256"
+          sha256sum "$deb" | tee "${deb}.sha256"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7
@@ -115,6 +121,7 @@ jobs:
           path: |
             dist/*.exe
             dist/*.AppImage
+            dist/*.deb
             dist/*.yml
             dist/*.blockmap
             dist/*.sha256
@@ -126,6 +133,7 @@ jobs:
           files: |
             dist/*.exe
             dist/*.AppImage
+            dist/*.deb
             dist/*.yml
             dist/*.blockmap
             dist/*.sha256

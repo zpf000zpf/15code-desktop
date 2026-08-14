@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8"/>
 <title>15code</title>
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self' https://new.15code.com https://claude.15code.com https://15code.com; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; img-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'none';">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self' https://new.15code.com https://claude.15code.com https://15code.com; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; img-src 'self' data: 15code-chat-image:; object-src 'none'; base-uri 'none'; form-action 'none';">
 <style>
 :root {
   --bg-primary: #0a0a0f;
@@ -514,7 +514,24 @@ button, input, select, textarea {
   padding: 14px;
   color: var(--text-secondary);
 }
-.image-studio{flex:1;overflow:auto;padding:24px;display:none}.image-shell{max-width:1080px;margin:auto;display:grid;grid-template-columns:360px 1fr;gap:20px}.image-panel{background:var(--bg-card);border:1px solid var(--border);border-radius:14px;padding:20px}.image-panel h2{margin:0 0 6px}.image-field{margin:14px 0}.image-field label{display:block;color:var(--text-muted);font-size:12px;margin-bottom:6px}.image-field textarea,.image-field select{width:100%;box-sizing:border-box;background:var(--bg-elevated);color:var(--text-primary);border:1px solid var(--border);border-radius:8px;padding:10px}.image-field textarea{min-height:110px;resize:vertical}.image-actions{display:flex;flex-wrap:wrap;gap:8px}.image-actions button{background:var(--accent);color:#fff;border:0;border-radius:8px;padding:9px 13px;cursor:pointer}.image-actions button.secondary{background:var(--bg-elevated);color:var(--text-primary);border:1px solid var(--border)}.image-actions button:disabled{opacity:.5;cursor:wait}.image-preview{min-height:420px;display:flex;align-items:center;justify-content:center;background:var(--bg-secondary);border:1px dashed var(--border);border-radius:12px;overflow:hidden}.image-preview img{max-width:100%;max-height:620px;object-fit:contain}.image-status{margin-top:12px;color:var(--text-muted);font-size:13px;white-space:pre-wrap}
+.chat-image-controls { display:none; margin-bottom:8px; padding:9px 10px; border:1px solid var(--border); border-radius:10px; background:var(--bg-card); }
+.chat-image-controls.active { display:block; }
+.chat-image-controls-row { display:flex; flex-wrap:wrap; align-items:center; gap:7px; }
+.chat-image-controls label { color:var(--text-muted); font-size:12px; }
+.chat-image-controls select, .chat-image-controls button { border:1px solid var(--border); border-radius:7px; background:var(--bg-elevated); color:var(--text-primary); padding:5px 8px; font-size:12px; }
+.chat-image-controls button { cursor:pointer; }
+.chat-image-controls button:hover { border-color:var(--accent); }
+.chat-image-source { flex:1; min-width:160px; color:var(--text-secondary); font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.chat-image-status { min-height:17px; margin-top:6px; color:var(--text-muted); font-size:12px; }
+.input-btn.active { border-color:var(--accent); color:var(--accent-hover); background:rgba(99,102,241,.15); }
+.image-card { overflow:hidden; border:1px solid var(--border); border-radius:10px; background:var(--bg-secondary); }
+.image-card.selected { border-color:var(--accent); box-shadow:0 0 0 1px var(--accent-glow); }
+.image-card-header { display:flex; justify-content:space-between; gap:10px; padding:8px 10px; color:var(--text-secondary); font-size:12px; }
+.image-card img { display:block; width:100%; max-height:560px; object-fit:contain; background:#090910; }
+.image-card-caption { padding:9px 10px 0; color:var(--text-secondary); font-size:12px; white-space:pre-wrap; word-break:break-word; }
+.image-card-actions { display:flex; flex-wrap:wrap; gap:7px; padding:9px 10px; }
+.image-card-actions button { border:1px solid var(--border); border-radius:6px; padding:4px 9px; background:var(--bg-elevated); color:var(--text-secondary); font-size:11px; cursor:pointer; }
+.image-card-actions button:hover { border-color:var(--accent); color:var(--text-primary); }
 </style>
 </head>
 <body>
@@ -549,7 +566,7 @@ button, input, select, textarea {
       <button class="menu-btn" onclick="newChat()" title="新建对话 (Ctrl+N)">+ 新建</button>
       <button class="menu-btn" onclick="showConversationManager()" title="搜索、置顶、重命名、删除和恢复会话">会话</button>
       <button class="menu-btn" onclick="showChatMode()" title="聊天">聊天</button>
-      <button class="menu-btn" onclick="showImageStudio()" title="图片生成与编辑">图片</button>
+      <button class="menu-btn" onclick="toggleChatImageMode()" title="在当前聊天中生成或修改图片">图片</button>
       <button class="menu-btn" onclick="showPptStudio()" title="PPT Studio (Ctrl+P)">PPT Studio</button>
     </div>
     <div class="topbar-right">
@@ -558,27 +575,6 @@ button, input, select, textarea {
       <button class="menu-btn" id="update-btn" onclick="checkForUpdates()" title="检查更新">检查更新</button>
       <button class="menu-btn" onclick="exportChat()" title="导出对话 (Ctrl+S)">⬇ 导出</button>
       <button class="menu-btn" onclick="logout()" title="登出">↗ 登出</button>
-    </div>
-  </div>
-
-  <div class="image-studio" id="image-studio">
-    <div class="image-shell">
-      <div class="image-panel">
-        <h2>图片生成与编辑</h2>
-        <div style="color:var(--text-muted);font-size:13px">使用当前登录账号的 15code API Key</div>
-        <div class="image-field"><label>提示词</label><textarea id="image-prompt" placeholder="描述要生成的图片，或说明如何修改已上传图片"></textarea></div>
-        <div class="image-field"><label>尺寸</label><select id="image-size"><option>1024x1024</option><option>1536x1024</option><option>1024x1536</option></select></div>
-        <div class="image-field"><label>质量</label><select id="image-quality"><option value="low">低（快速）</option><option value="medium">中</option><option value="high">高</option></select></div>
-        <div class="image-field"><label>格式</label><select id="image-format"><option value="png">PNG</option><option value="jpeg">JPEG</option><option value="webp">WebP</option></select></div>
-        <div class="image-actions">
-          <button id="image-generate-btn" onclick="generateImage()">生成图片</button>
-          <button class="secondary" onclick="selectImageForEdit()">选择图片修改</button>
-          <button class="secondary" id="image-edit-btn" onclick="editSelectedImage()" disabled>执行修改</button>
-          <button class="secondary" id="image-save-btn" onclick="saveGeneratedImage()" disabled>保存图片</button>
-        </div>
-        <div class="image-status" id="image-status"></div>
-      </div>
-      <div class="image-panel"><div class="image-preview" id="image-preview"><span>生成结果或待修改图片将在这里显示</span></div></div>
     </div>
   </div>
 
@@ -673,11 +669,23 @@ button, input, select, textarea {
   <!-- 输入区 -->
   <div class="input-area">
     <div class="input-wrap">
+      <div class="chat-image-controls" id="chat-image-controls">
+        <div class="chat-image-controls-row">
+          <span class="chat-image-source" id="chat-image-source">图片模式：将根据提示词生成新图片</span>
+          <label>尺寸 <select id="chat-image-size"><option>1024x1024</option><option>1536x1024</option><option>1024x1536</option></select></label>
+          <label>质量 <select id="chat-image-quality"><option value="low">低</option><option value="medium">中</option><option value="high">高</option></select></label>
+          <label>格式 <select id="chat-image-format"><option value="png">PNG</option><option value="jpeg">JPEG</option><option value="webp">WebP</option></select></label>
+          <button type="button" onclick="chooseChatImageForEdit()">本地图片</button>
+          <button type="button" onclick="clearChatImageSource()">新建图片</button>
+        </div>
+        <div class="chat-image-status" id="chat-image-status" aria-live="polite"></div>
+      </div>
       <div class="attachments" id="attachments"></div>
       <div class="input-box">
         <textarea id="input" placeholder="问点什么... (Ctrl+Enter 发送)" rows="1"></textarea>
         <div class="input-actions">
           <button class="input-btn" onclick="openFileMenu()" title="附加文件 (Ctrl+O)">📎</button>
+          <button class="input-btn" id="chat-image-toggle" onclick="toggleChatImageMode()" title="图片生成或修改">🖼</button>
         </div>
         <button class="send-btn" id="send-btn" onclick="sendMessage()">发送 →</button>
       </div>
@@ -688,6 +696,7 @@ button, input, select, textarea {
   </div>
 </div>
 
+<script src="chat-image-state.js"></script>
 <script>
 // ═══════════════════════ 全局状态 ═══════════════════════
 const PLATFORM = 'https://15code.com';
@@ -710,8 +719,11 @@ const state = {
   pptSlides: [],
   pptImages: {},       // slideIndex -> { dataUrl, model, prompt }
   pptImported: null,
-  imageInputPath: null,
-  imageResult: null,
+  chatImageMode: false,
+  chatImageSource: null, // {assetId, url, name?, operation}; only metadata, never base64
+  lastChatImageSource: null,
+  chatImageBusy: false,
+  selectedImageAssetId: null,
   streaming: false,
   currentRequestId: null,
   stopRequested: false,
@@ -719,6 +731,9 @@ const state = {
 };
 let balanceRefreshTimer = null;
 let draftSaveTimer = null;
+let conversationSaveQueue = Promise.resolve();
+let activeChatImageOperation = null;
+let quitFlushStarted = false;
 
 const MAX_ATTACHMENT_BYTES = 2 * 1024 * 1024;
 const MAX_ATTACHMENT_CHARS = 50000;
@@ -737,23 +752,58 @@ function escapeHtml(s) {
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
-// 极简 markdown → HTML（代码块 / 粗体 / 行内代码 / 换行）
-function mdToHtml(md) {
-  let h = escapeHtml(md);
-  // 三反引号代码块
-  h = h.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) =>
-    `<pre><code class="lang-${lang}">${code.replace(/&/g,'&amp;').replace(/</g,'&lt;')}</code></pre>`);
-  // 行内代码
-  h = h.replace(/`([^`]+)`/g, '<code>$1</code>');
-  // 粗体
-  h = h.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
-  // 斜体
-  h = h.replace(/\*([^*\n]+)\*/g, '<em>$1</em>');
-  // 标题
-  h = h.replace(/^### (.+)$/gm, '<h3>$1</h3>');
-  h = h.replace(/^## (.+)$/gm, '<h2>$1</h2>');
-  h = h.replace(/^# (.+)$/gm, '<h1>$1</h1>');
-  return h;
+function makeElement(tag, className, text) {
+  const element = document.createElement(tag);
+  if (className) element.className = className;
+  if (text !== undefined) element.textContent = String(text);
+  return element;
+}
+
+function appendInlineMarkdown(parent, source) {
+  const text = String(source || '');
+  const tokens = text.split(/(`[^`]+`|\*\*[^*]+\*\*|\*[^*\n]+\*)/g);
+  tokens.forEach(token => {
+    if (!token) return;
+    if (token.startsWith('`') && token.endsWith('`')) {
+      const code = document.createElement('code'); code.textContent = token.slice(1, -1); parent.appendChild(code);
+    } else if (token.startsWith('**') && token.endsWith('**')) {
+      const strong = document.createElement('strong'); strong.textContent = token.slice(2, -2); parent.appendChild(strong);
+    } else if (token.startsWith('*') && token.endsWith('*')) {
+      const em = document.createElement('em'); em.textContent = token.slice(1, -1); parent.appendChild(em);
+    } else parent.appendChild(document.createTextNode(token));
+  });
+}
+
+// The renderer never parses model text or persisted metadata as HTML.  This small
+// DOM renderer intentionally supports the formatting already advertised by the app
+// without creating an injection sink.
+function renderMarkdownInto(container, markdown) {
+  container.replaceChildren();
+  const lines = String(markdown || '').split('\n');
+  let codeLines = null;
+  let language = '';
+  const flushCode = () => {
+    if (!codeLines) return;
+    const pre = document.createElement('pre');
+    const code = document.createElement('code');
+    if (/^[A-Za-z0-9_-]{1,32}$/.test(language)) code.className = 'lang-' + language;
+    code.textContent = codeLines.join('\n'); pre.appendChild(code); container.appendChild(pre);
+    codeLines = null; language = '';
+  };
+  lines.forEach((line, index) => {
+    const fence = line.match(/^```([A-Za-z0-9_-]{0,32})\s*$/);
+    if (fence) {
+      if (codeLines) flushCode(); else { codeLines = []; language = fence[1] || ''; }
+      return;
+    }
+    if (codeLines) { codeLines.push(line); return; }
+    const heading = line.match(/^(#{1,3})\s+(.+)$/);
+    const node = heading ? document.createElement('h' + heading[1].length) : document.createElement('span');
+    appendInlineMarkdown(node, heading ? heading[2] : line);
+    container.appendChild(node);
+    if (!heading && index < lines.length - 1) container.appendChild(document.createElement('br'));
+  });
+  flushCode();
 }
 
 async function fetchJson(url, opts = {}) {
@@ -895,7 +945,12 @@ async function doLogin(e) {
       throw new Error('服务端未返回 sessionToken（请确认服务端已升级到支持 X-Auth-Mode: bearer）');
     }
     state.sessionToken = loginResp.sessionToken;
-    await window.desktop?.setSessionToken?.(state.sessionToken);
+    const sessionStorage = await window.desktop?.setSessionToken?.(state.sessionToken);
+    if (!sessionStorage?.persisted) {
+      state.sessionToken = null;
+      await window.desktop?.clearSessionToken?.();
+      throw new Error('系统安全密钥环不可用。为保护账号，登录信息未保存；请解锁 GNOME Keyring 或安装 libsecret-tools 后重试。');
+    }
 
     // 主进程使用 safeStorage 保存 goKey，渲染层永远不接收或持有 Key。
     const account = await window.desktop.bootstrapAccount();
@@ -925,6 +980,10 @@ function logout() {
     state.sessionToken = null;
     state.messages = [];
     state.attachments = [];
+    state.chatImageMode = false;
+    state.chatImageSource = null;
+    state.lastChatImageSource = null;
+    state.selectedImageAssetId = null;
     if (balanceRefreshTimer) {
       clearInterval(balanceRefreshTimer);
       balanceRefreshTimer = null;
@@ -943,7 +1002,7 @@ function showApp() {
 
   // 填充模型下拉
   const sel = document.getElementById('model-pick');
-  sel.innerHTML = '';
+  sel.replaceChildren();
   const groups = {};
   for (const m of state.models) {
     const group = getModelGroupName(m);
@@ -980,9 +1039,11 @@ function showApp() {
   sel.onchange = () => {
     state.currentModel = sel.value;
     localStorage.setItem('15code:model', sel.value);
-    document.getElementById('hero-model').textContent = getModelName(sel.value);
+    const heroModel = document.getElementById('hero-model');
+    if (heroModel) heroModel.textContent = getModelName(sel.value);
   };
-  document.getElementById('hero-model').textContent = getModelName(state.currentModel);
+  const heroModel = document.getElementById('hero-model');
+  if (heroModel) heroModel.textContent = getModelName(state.currentModel);
 
   if (state.catalogWarning) {
     const warning = state.catalogWarning;
@@ -1035,7 +1096,7 @@ async function refreshBalance() {
     const me = await fetchJson(PLATFORM + '/api/me');
     const credits = Number(me.user?.credits || 0) / 1_000_000;
     const box = document.getElementById('balance-box');
-    box.innerHTML = '余额 <b>$' + credits.toFixed(2) + '</b>';
+    box.replaceChildren(document.createTextNode('余额 '), makeElement('b', '', '$' + credits.toFixed(2)));
     if (credits < 1) box.style.color = 'var(--warn)';
   } catch (e) {
     console.warn('refreshBalance fail', e);
@@ -1045,14 +1106,12 @@ async function refreshBalance() {
 // ═══════════════════════ PPT Studio ═══════════════════════
 function showChatMode() {
   document.getElementById('ppt-studio').style.display = 'none';
-  document.getElementById('image-studio').style.display = 'none';
   document.getElementById('chat-area').style.display = 'block';
   document.querySelector('.input-area').style.display = 'block';
   document.getElementById('input').focus();
 }
 
 function showPptStudio() {
-  document.getElementById('image-studio').style.display = 'none';
   document.getElementById('chat-area').style.display = 'none';
   document.querySelector('.input-area').style.display = 'none';
   document.getElementById('ppt-studio').style.display = 'block';
@@ -1066,58 +1125,85 @@ function showPptStudio() {
   }
 }
 
-async function showImageStudio() {
-  document.getElementById('chat-area').style.display = 'none';
-  document.querySelector('.input-area').style.display = 'none';
-  document.getElementById('ppt-studio').style.display = 'none';
-  document.getElementById('image-studio').style.display = 'block';
-  document.getElementById('image-prompt').focus();
-  try {
-    const capabilities = await window.desktop.imageCapabilities();
-    setImageStatus(capabilities.generation ? '图片服务已连接。' : '当前账号尚未开通图片权限。');
-  } catch (error) { setImageStatus(error.message); }
+function chatImageOptions() {
+  return {
+    size: document.getElementById('chat-image-size').value,
+    quality: document.getElementById('chat-image-quality').value,
+    format: document.getElementById('chat-image-format').value,
+  };
 }
 
-function setImageStatus(message) { document.getElementById('image-status').textContent = message || ''; }
-function renderImagePreview(dataUrl) {
-  const preview = document.getElementById('image-preview');
-  preview.innerHTML = dataUrl ? `<img src="${dataUrl}" alt="15code image result">` : '<span>暂无图片</span>';
+function setChatImageStatus(message) {
+  document.getElementById('chat-image-status').textContent = message || '';
 }
-function imageOptions() {
-  return { prompt: document.getElementById('image-prompt').value.trim(), size: document.getElementById('image-size').value,
-    quality: document.getElementById('image-quality').value, format: document.getElementById('image-format').value };
+
+function renderChatImageMode() {
+  const controls = document.getElementById('chat-image-controls');
+  const toggle = document.getElementById('chat-image-toggle');
+  const send = document.getElementById('send-btn');
+  controls.classList.toggle('active', state.chatImageMode);
+  toggle.classList.toggle('active', state.chatImageMode);
+  const source = state.chatImageSource;
+  document.getElementById('chat-image-source').textContent = source
+    ? `修改图片：${source.name || '当前选中图片'}（结果会留在本对话）`
+    : state.lastChatImageSource
+      ? '图片模式：将根据最近结果生成新图片；点击图片卡片或“基于此图修改”可继续修改'
+      : '图片模式：将根据提示词生成新图片';
+  const input = document.getElementById('input');
+  input.placeholder = state.chatImageMode
+    ? (source ? '描述如何修改这张图片… (Ctrl+Enter)' : '描述要生成的图片… (Ctrl+Enter)')
+    : '问点什么... (Ctrl+Enter 发送)';
+  if (!state.streaming) {
+    send.textContent = state.chatImageMode ? (source ? '修改图片 →' : '生成图片 →') : '发送 →';
+    send.disabled = state.chatImageBusy;
+  }
 }
-async function generateImage() {
-  const options = imageOptions();
-  if (!options.prompt) return setImageStatus('请输入提示词。');
-  const button = document.getElementById('image-generate-btn'); button.disabled = true; setImageStatus('正在生成图片...');
+
+async function toggleChatImageMode(force) {
+  const next = force === undefined ? !state.chatImageMode : Boolean(force);
+  state.chatImageMode = next;
+  if (next) {
+    showChatMode();
+    try {
+      const capabilities = await window.desktop?.imageCapabilities?.();
+      setChatImageStatus(capabilities?.generation ? '图片服务已连接。' : '当前账号尚未开通图片权限。');
+    } catch (error) { setChatImageStatus(error.message); }
+  } else {
+    setChatImageStatus('');
+  }
+  renderChatImageMode();
+  document.getElementById('input').focus();
+}
+
+function clearChatImageSource() {
+  state.chatImageSource = null;
+  setChatImageStatus('将生成一张新图片。');
+  renderChatImageMode();
+}
+
+async function chooseChatImageForEdit() {
   try {
-    const result = await window.desktop.generateImage({ ...options, model: 'gpt-image-2', clientRequestId: 'desktop-img-' + crypto.randomUUID() });
-    state.imageResult = result.dataUrl; renderImagePreview(result.dataUrl);
-    document.getElementById('image-save-btn').disabled = false;
-    setImageStatus(`生成完成。Token：${Number(result.usage?.total_tokens || 0).toLocaleString()}`);
-  } catch (error) { setImageStatus('生成失败：' + error.message); } finally { button.disabled = false; }
-}
-async function selectImageForEdit() {
-  try {
-    const selected = await window.desktop.selectImageForEdit(); if (!selected?.ok) return;
-    state.imageInputPath = selected.path; renderImagePreview(selected.previewUrl);
-    document.getElementById('image-edit-btn').disabled = false; setImageStatus(`已选择：${selected.name}`);
-  } catch (error) { setImageStatus('读取图片失败：' + error.message); }
-}
-async function editSelectedImage() {
-  const options = imageOptions(); if (!state.imageInputPath || !options.prompt) return setImageStatus('请选择图片并填写修改要求。');
-  const button = document.getElementById('image-edit-btn'); button.disabled = true; setImageStatus('正在修改图片...');
-  try {
-    const result = await window.desktop.editImage({ ...options, path: state.imageInputPath, clientRequestId: 'desktop-edit-' + crypto.randomUUID() });
-    state.imageResult = result.dataUrl; renderImagePreview(result.dataUrl);
-    document.getElementById('image-save-btn').disabled = false; setImageStatus('修改完成。');
-  } catch (error) { setImageStatus('修改失败：' + error.message); } finally { button.disabled = false; }
-}
-async function saveGeneratedImage() {
-  if (!state.imageResult) return;
-  try { const saved = await window.desktop.saveGeneratedImage({ dataUrl: state.imageResult }); if (saved?.ok) setImageStatus('已保存：' + saved.path); }
-  catch (error) { setImageStatus('保存失败：' + error.message); }
+    await persistCurrentConversation();
+    const messageId = crypto.randomUUID();
+    const selected = await window.desktop?.selectChatImage?.({ conversationId: state.currentConversationId, messageId });
+    if (!selected?.ok) return;
+    state.messages.push({
+      id: messageId, role: 'user', type: 'image', content: '', createdAt: Date.now(),
+      image: {
+        assetId: selected.assetId, operation: 'import', status: 'complete', format: selected.format,
+        mime: selected.mime, size: '1024x1024', quality: 'low', prompt: '', sourceAssetId: null,
+        error: null, url: selected.url,
+      },
+    });
+    state.chatImageSource = selected;
+    state.lastChatImageSource = selected;
+    state.selectedImageAssetId = selected.assetId;
+    state.chatImageMode = true;
+    setChatImageStatus(`已选择本地图片：${selected.name}`);
+    renderChatImageMode();
+    renderMessages();
+    await persistCurrentConversation();
+  } catch (error) { setChatImageStatus('读取图片失败：' + error.message); }
 }
 
 function setPptStatus(text) {
@@ -1218,19 +1304,26 @@ function buildPptImagePrompt(slide, index, topic, style, scenario) {
 
 function renderPptSlides() {
   const box = document.getElementById('ppt-slides');
-  box.innerHTML = '';
+  box.replaceChildren();
   state.pptSlides.forEach((slide, i) => {
-    const card = document.createElement('div');
-    card.className = 'ppt-slide-card';
+    const card = makeElement('div', 'ppt-slide-card');
     const image = state.pptImages[i]?.dataUrl;
-    card.innerHTML = `
-      ${image ? `<img class="ppt-slide-thumb" src="${image}" alt="slide visual ${i + 1}">` : '<div class="ppt-slide-thumb empty">未生成配图</div>'}
-      <div style="color:var(--text-muted);font-size:11px;margin-bottom:6px">#${i + 1} · ${escapeHtml(slide.visualType || 'content')}</div>
-      <h4>${escapeHtml(slide.title)}</h4>
-      ${slide.subtitle ? `<div style="color:var(--text-muted);font-size:12px;margin-bottom:8px">${escapeHtml(slide.subtitle)}</div>` : ''}
-      <ul>${(slide.bullets || []).map(b => `<li>${escapeHtml(b)}</li>`).join('')}</ul>
-      <button class="ppt-btn" style="margin-top:8px" onclick="regeneratePptImage(${i})">重做本页配图</button>
-    `;
+    if (image) {
+      const thumb = makeElement('img', 'ppt-slide-thumb');
+      thumb.src = image; thumb.alt = `slide visual ${i + 1}`; card.appendChild(thumb);
+    } else card.appendChild(makeElement('div', 'ppt-slide-thumb empty', '未生成配图'));
+    const meta = makeElement('div', '', `#${i + 1} · ${slide.visualType || 'content'}`);
+    meta.style.cssText = 'color:var(--text-muted);font-size:11px;margin-bottom:6px'; card.appendChild(meta);
+    card.appendChild(makeElement('h4', '', slide.title));
+    if (slide.subtitle) {
+      const subtitle = makeElement('div', '', slide.subtitle);
+      subtitle.style.cssText = 'color:var(--text-muted);font-size:12px;margin-bottom:8px'; card.appendChild(subtitle);
+    }
+    const bullets = document.createElement('ul');
+    (slide.bullets || []).forEach(bullet => bullets.appendChild(makeElement('li', '', bullet)));
+    card.appendChild(bullets);
+    const redo = makeElement('button', 'ppt-btn', '重做本页配图');
+    redo.style.marginTop = '8px'; redo.addEventListener('click', () => regeneratePptImage(i)); card.appendChild(redo);
     box.appendChild(card);
   });
 }
@@ -1513,9 +1606,16 @@ function newChat() {
   state.currentDraft = '';
   state.messages = [];
   state.attachments = [];
+  state.chatImageSource = null;
+  state.lastChatImageSource = null;
+  state.selectedImageAssetId = null;
+  // A request from the previous conversation is tracked separately and will finish
+  // there; the newly created conversation itself is immediately usable.
+  state.chatImageBusy = false;
   renderMessages();
   renderAttachments();
   document.getElementById('input').value = '';
+  renderChatImageMode();
   document.getElementById('input').focus();
   void persistCurrentConversation();
 }
@@ -1526,15 +1626,31 @@ function conversationTitle() {
   return text.length > 36 ? text.slice(0, 36) + '…' : text;
 }
 
-async function persistCurrentConversation() {
-  if (!window.desktop?.saveConversation || !state.currentConversationId) return;
-  await window.desktop.saveConversation({
+function persistConversationSnapshot(snapshot) {
+  if (!window.desktop?.saveConversation || !snapshot?.id) return;
+  // Serialize every conversation write, including a result that finishes after the
+  // user has switched conversations. This keeps an older image operation from writing
+  // its final state into whichever conversation happens to be active at that moment.
+  const save = conversationSaveQueue.then(() => window.desktop.saveConversation(snapshot));
+  conversationSaveQueue = save.catch(() => {});
+  return save;
+}
+
+function snapshotCurrentConversation() {
+  if (!state.currentConversationId) return null;
+  return {
     id: state.currentConversationId,
     title: conversationTitle(),
     model: state.currentModel,
     draft: document.getElementById('input')?.value || state.currentDraft || '',
-    messages: state.messages,
-  });
+    messages: state.messages.map(message => ({ ...message, image: message.image ? { ...message.image } : undefined })),
+  };
+}
+
+function persistCurrentConversation() {
+  // Snapshot now, then serialize the write. A draft timer, a streaming response, an
+  // image result and the quit flush must never delete/rewrite each other's messages.
+  return persistConversationSnapshot(snapshotCurrentConversation());
 }
 
 async function openConversation(id) {
@@ -1544,6 +1660,12 @@ async function openConversation(id) {
   state.currentConversationId = id;
   localStorage.setItem('15code:conversation', id);
   state.messages = conversation.messages || [];
+  state.chatImageSource = null;
+  state.lastChatImageSource = null;
+  state.selectedImageAssetId = null;
+  // An image operation may still be finalizing for the conversation we just left.
+  // Its completion is bound to that conversation and must not make this one look busy.
+  state.chatImageBusy = false;
   state.currentDraft = conversation.draft || '';
   if (conversation.model && state.models.some(model => model.modelId === conversation.model && model.status === 'available')) {
     state.currentModel = conversation.model;
@@ -1582,35 +1704,93 @@ async function showConversationManager() {
 
 function renderMessages() {
   const box = document.getElementById('messages');
-  const emptyHtml = `
-    <div class="hero-empty" id="hero-empty">
-      <h2>👋 欢迎使用 15code</h2>
-      <p>输入问题或拖入文件开始对话</p>
-      <p style="font-size:13px;margin-top:8px">当前模型：<b id="hero-model">${escapeHtml(getModelName(state.currentModel) || '加载中...')}</b></p>
-    </div>
-  `;
   if (state.messages.length === 0) {
-    box.innerHTML = emptyHtml;
+    const empty = makeElement('div', 'hero-empty'); empty.id = 'hero-empty';
+    empty.appendChild(makeElement('h2', '', '👋 欢迎使用 15code'));
+    empty.appendChild(makeElement('p', '', '输入问题、拖入文件或点击图片按钮开始对话'));
+    const model = makeElement('p', '', '当前模型：'); model.style.cssText = 'font-size:13px;margin-top:8px';
+    const name = makeElement('b', '', getModelName(state.currentModel) || '加载中...'); name.id = 'hero-model'; model.appendChild(name); empty.appendChild(model);
+    box.replaceChildren(empty);
     return;
   }
-  box.innerHTML = '';
+  box.replaceChildren();
   state.messages.forEach((m, i) => {
-    const el = document.createElement('div');
-    el.className = 'msg ' + m.role;
-    const roleIcon = m.role === 'user' ? '👤 <b>你</b>' : '🤖 <b>' + getModelName(state.currentModel) + '</b>';
-    el.innerHTML = `
-      <div class="msg-role ${m.role}">${roleIcon}</div>
-      <div class="msg-body">${mdToHtml(m.content)}</div>
-      <div class="msg-actions">
-        <button onclick="copyMsg(${i})">复制</button>
-        ${m.role === 'user' ? '' : `<button onclick="regenMsg(${i})">重新生成</button>`}
-      </div>
-    `;
+    const el = makeElement('div', 'msg ' + (m.role === 'user' ? 'user' : 'assistant'));
+    const role = makeElement('div', 'msg-role ' + (m.role === 'user' ? 'user' : 'assistant'));
+    role.appendChild(document.createTextNode(m.role === 'user' ? '👤 ' : '🤖 '));
+    role.appendChild(makeElement('b', '', m.role === 'user' ? '你' : getModelName(state.currentModel)));
+    el.appendChild(role);
+    const body = makeElement('div', 'msg-body');
+    if (m.type === 'image' && m.image) renderImageMessage(body, m, i); else renderMarkdownInto(body, m.content);
+    el.appendChild(body);
+    const actions = makeElement('div', 'msg-actions');
+    const copy = makeElement('button', '', '复制'); copy.addEventListener('click', () => copyMsg(i)); actions.appendChild(copy);
+    if (m.role !== 'user' && m.type !== 'image') {
+      const regenerate = makeElement('button', '', '重新生成'); regenerate.addEventListener('click', () => regenMsg(i)); actions.appendChild(regenerate);
+    }
+    el.appendChild(actions);
     box.appendChild(el);
   });
   // scroll
   const area = document.getElementById('chat-area');
   area.scrollTop = area.scrollHeight;
+}
+
+function renderImageMessage(container, message, index) {
+  const image = message.image || {};
+  const card = makeElement('article', 'image-card' + (state.selectedImageAssetId === image.assetId ? ' selected' : ''));
+  const header = makeElement('div', 'image-card-header');
+  const kind = image.operation === 'edit' ? '已修改图片' : image.operation === 'import' ? '本地图片' : '已生成图片';
+  header.appendChild(makeElement('span', '', kind));
+  header.appendChild(makeElement('span', '', image.status === 'pending' ? '处理中…' : image.status === 'error' ? '失败' : `${image.size || ''} · ${String(image.format || '').toUpperCase()}`));
+  card.appendChild(header);
+  if (image.url && image.status !== 'error') {
+    const img = document.createElement('img');
+    img.src = image.url;
+    img.alt = '15code 聊天图片';
+    img.loading = 'lazy';
+    img.referrerPolicy = 'no-referrer';
+    img.addEventListener('error', () => { img.replaceWith(makeElement('div', 'image-card-caption', '图片文件已不可用或已被清理。')); });
+    card.appendChild(img);
+  }
+  if (image.prompt) card.appendChild(makeElement('div', 'image-card-caption', image.prompt));
+  if (image.error) card.appendChild(makeElement('div', 'image-card-caption', '失败：' + image.error));
+  const actions = makeElement('div', 'image-card-actions');
+  if (image.assetId && image.status === 'complete') {
+    const modify = makeElement('button', '', '基于此图修改');
+    modify.addEventListener('click', () => useImageAsChatSource(index)); actions.appendChild(modify);
+    const select = makeElement('button', '', state.selectedImageAssetId === image.assetId ? '已选中' : '选中');
+    select.addEventListener('click', () => { state.selectedImageAssetId = image.assetId; renderMessages(); }); actions.appendChild(select);
+    const save = makeElement('button', '', '保存图片');
+    save.addEventListener('click', () => saveChatImage(index)); actions.appendChild(save);
+  }
+  card.appendChild(actions);
+  container.appendChild(card);
+}
+
+function useImageAsChatSource(index) {
+  const message = state.messages[index];
+  if (!message?.image?.assetId || message.image.status !== 'complete') return;
+  state.selectedImageAssetId = message.image.assetId;
+  state.chatImageSource = { assetId: message.image.assetId, url: message.image.url, name: '时间线图片', operation: message.image.operation };
+  state.lastChatImageSource = state.chatImageSource;
+  state.chatImageMode = true;
+  setChatImageStatus('将基于所选时间线图片继续修改。');
+  showChatMode();
+  renderChatImageMode();
+  renderMessages();
+  document.getElementById('input').focus();
+}
+
+async function saveChatImage(index) {
+  const image = state.messages[index]?.image;
+  if (image?.status !== 'complete') return;
+  const assetId = image.assetId;
+  if (!assetId) return;
+  try {
+    const saved = await window.desktop?.saveChatImage?.({ conversationId: state.currentConversationId, assetId });
+    if (saved?.ok) setChatImageStatus('已保存：' + saved.path);
+  } catch (error) { setChatImageStatus('保存失败：' + error.message); }
 }
 
 function copyMsg(i) {
@@ -1632,6 +1812,10 @@ async function sendMessage() {
   }
   const input = document.getElementById('input');
   const text = input.value.trim();
+  if (state.chatImageMode) {
+    await sendChatImageMessage(text);
+    return;
+  }
   if (!text && state.attachments.length === 0) return;
 
   // 组装用户消息（附件拼接）
@@ -1643,7 +1827,7 @@ async function sendMessage() {
     userContent = (text || '请分析以下内容') + attachText;
   }
 
-  state.messages.push({ role: 'user', content: userContent });
+  state.messages.push({ id: crypto.randomUUID(), role: 'user', content: userContent, createdAt: Date.now() });
   state.attachments = [];
   renderAttachments();
   input.value = '';
@@ -1651,6 +1835,109 @@ async function sendMessage() {
   renderMessages();
 
   await sendToAssistant();
+}
+
+async function sendChatImageMessage(prompt) {
+  if (state.chatImageBusy || activeChatImageOperation) {
+    setChatImageStatus('另一项图片操作正在完成，请稍候。');
+    return;
+  }
+  if (!prompt) {
+    setChatImageStatus(state.chatImageSource ? '请填写如何修改这张图片。' : '请描述要生成的图片。');
+    return;
+  }
+  if (!window.desktop?.generateChatImage || !window.desktop?.editChatImage) {
+    setChatImageStatus('当前桌面版本不支持聊天图片模式。');
+    return;
+  }
+  const operationConversationId = state.currentConversationId;
+  await persistCurrentConversation();
+  // Awaiting the initial save permits a session switch. Do not start an image request
+  // using the newly selected conversation while retaining the old UI state.
+  if (state.currentConversationId !== operationConversationId) return;
+  const input = document.getElementById('input');
+  const source = state.chatImageSource;
+  const options = chatImageOptions();
+  const requestId = 'chat-img-' + crypto.randomUUID();
+  const imageMessageId = crypto.randomUUID();
+  const message = {
+    id: imageMessageId, role: 'assistant', type: 'image', content: '', createdAt: Date.now(),
+    image: {
+      assetId: crypto.randomUUID(), operation: source ? 'edit' : 'generate', status: 'pending',
+      format: options.format, mime: options.format === 'jpeg' ? 'image/jpeg' : `image/${options.format}`,
+      size: options.size, quality: options.quality, prompt, sourceAssetId: source?.assetId || null, error: null,
+    },
+  };
+  // The pending ID contains no image bytes. On success it is replaced with the
+  // persisted asset ID; on failure it remains only as a metadata-only error card.
+  state.messages.push({
+    id: crypto.randomUUID(), role: 'user', content: (source ? '修改图片：' : '生成图片：') + prompt, createdAt: Date.now(),
+  });
+  state.messages.push(message);
+  const operationMessages = state.messages;
+  const operationModel = state.currentModel;
+  state.chatImageBusy = true;
+  let finishChatImageOperation;
+  const thisChatImageOperation = new Promise(resolve => { finishChatImageOperation = resolve; });
+  activeChatImageOperation = thisChatImageOperation;
+  input.value = '';
+  input.style.height = 'auto';
+  setChatImageStatus(source ? '正在修改图片…' : '正在生成图片…');
+  renderMessages();
+  try {
+    const result = source
+      ? await window.desktop.editChatImage({ conversationId: state.currentConversationId, messageId: imageMessageId, sourceAssetId: source.assetId, prompt, ...options, clientRequestId: requestId })
+      : await window.desktop.generateChatImage({ conversationId: state.currentConversationId, messageId: imageMessageId, prompt, ...options, clientRequestId: requestId });
+    if (!result?.assetId || !result.url) throw new Error('图片服务没有返回可保存的图片');
+    message.image = {
+      assetId: result.assetId, operation: result.operation, status: 'complete', format: result.format,
+      mime: result.mime, size: result.size || options.size, quality: result.quality || options.quality,
+      prompt, sourceAssetId: result.sourceAssetId || source?.assetId || null, error: null, url: result.url,
+    };
+    if (state.currentConversationId === operationConversationId) {
+      state.selectedImageAssetId = result.assetId;
+      state.chatImageSource = { assetId: result.assetId, url: result.url, name: '最近生成结果', operation: result.operation };
+      state.lastChatImageSource = state.chatImageSource;
+      setChatImageStatus('已完成。可继续基于最近结果修改，或保存图片。');
+    }
+  } catch (error) {
+    // Keep a metadata-only error card so a failed operation is visible after reload.
+    // The pending asset ID is synthetic and never maps to a file or database row.
+    message.image = {
+      ...message.image,
+      status: 'error',
+      error: String(error?.message || '图片操作失败').slice(0, 500),
+      url: null,
+    };
+    if (state.currentConversationId === operationConversationId) {
+      state.selectedImageAssetId = null;
+      setChatImageStatus((source ? '修改失败：' : '生成失败：') + error.message);
+    }
+  } finally {
+    const finalized = ChatImageState.finalizeImageOperation({
+      operationConversationId, imageMessageId, operationMessages, operationModel,
+      finishedImage: message.image, currentConversationId: state.currentConversationId,
+      currentMessages: state.messages, currentModel: state.currentModel,
+      currentDraft: document.getElementById('input')?.value || state.currentDraft || '',
+    });
+    const { stillCurrentConversation, snapshot: operationSnapshot } = finalized;
+    if (stillCurrentConversation) {
+      state.messages = finalized.messages;
+      state.chatImageBusy = false;
+      renderMessages();
+      renderChatImageMode();
+    }
+    try {
+      await persistConversationSnapshot(operationSnapshot);
+    } finally {
+      finishChatImageOperation();
+      if (activeChatImageOperation === thisChatImageOperation) activeChatImageOperation = null;
+    }
+    if (stillCurrentConversation) {
+      refreshBalance();
+      input.focus();
+    }
+  }
 }
 
 async function sendToAssistant() {
@@ -1661,7 +1948,7 @@ async function sendToAssistant() {
   btn.textContent = '停止';
 
   // 占位消息
-  state.messages.push({ role: 'assistant', content: '' });
+  state.messages.push({ id: crypto.randomUUID(), role: 'assistant', content: '', createdAt: Date.now() });
   const idx = state.messages.length - 1;
   renderMessages();
 
@@ -1677,7 +1964,7 @@ async function sendToAssistant() {
     const last = document.querySelectorAll('#messages .msg').item(idx);
     if (last) {
       const body = last.querySelector('.msg-body');
-      if (final) body.innerHTML = mdToHtml(state.messages[idx].content || '');
+      if (final) renderMarkdownInto(body, state.messages[idx].content || '');
       else body.textContent = state.messages[idx].content || '正在生成...';
     }
     if (isNearChatBottom()) {
@@ -1704,7 +1991,9 @@ async function sendToAssistant() {
 
     const payload = {
       model: state.currentModel,
-      messages: state.messages.slice(0, -1).map(m => ({ role: m.role, content: m.content })),
+      messages: state.messages.slice(0, -1)
+        .filter(message => message.type !== 'image' && String(message.content || '').trim())
+        .map(message => ({ role: message.role, content: message.content })),
     };
 
     const last = document.querySelectorAll('#messages .msg').item(idx);
@@ -1807,11 +2096,15 @@ async function cancelGeneration() {
 // ═══════════════════════ 附件 ═══════════════════════
 function renderAttachments() {
   const box = document.getElementById('attachments');
-  box.innerHTML = '';
+  box.replaceChildren();
   state.attachments.forEach((a, i) => {
-    const chip = document.createElement('span');
-    chip.className = 'attach-chip';
-    chip.innerHTML = `📎 ${escapeHtml(a.name)} <span class="x" onclick="removeAttachment(${i})">×</span>`;
+    const chip = makeElement('span', 'attach-chip');
+    chip.appendChild(document.createTextNode('📎 ' + a.name + ' '));
+    const remove = makeElement('span', 'x', '×');
+    remove.setAttribute('role', 'button'); remove.tabIndex = 0;
+    remove.addEventListener('click', () => removeAttachment(i));
+    remove.addEventListener('keydown', event => { if (event.key === 'Enter' || event.key === ' ') removeAttachment(i); });
+    chip.appendChild(remove);
     box.appendChild(chip);
   });
 }
@@ -1961,6 +2254,21 @@ if (window.desktop) {
       }
     });
   }
+  window.desktop.onPrepareToQuit?.(async () => {
+    if (quitFlushStarted) return;
+    quitFlushStarted = true;
+    clearTimeout(draftSaveTimer);
+    try {
+      // A generation already accepted by main owns an asynchronous asset write.  Wait
+      // for its final serialized conversation save before acknowledging the close.
+      await activeChatImageOperation;
+      await persistCurrentConversation();
+    } catch (error) {
+      console.warn('Final conversation save failed during shutdown:', error);
+    } finally {
+      try { await window.desktop.acknowledgeQuitFlush?.(); } catch (error) { console.warn('Quit flush acknowledgement failed:', error); }
+    }
+  });
 }
 
 async function checkForUpdates() {

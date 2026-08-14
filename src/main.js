@@ -1,13 +1,23 @@
 // 15code Desktop — Electron main process
-const { app, BrowserWindow, Menu, shell, dialog, ipcMain, safeStorage } = require('electron');
+const { app, BrowserWindow, Menu, shell, dialog, ipcMain, safeStorage, protocol } = require('electron');
 const path = require('path');
 const { pathToFileURL } = require('url');
 const fs = require('fs');
+const { spawnSync } = require('child_process');
 const https = require('https');
+const { randomUUID } = require('crypto');
 const { autoUpdater } = require('electron-updater');
 const PptxGenJS = require('pptxgenjs');
 const JSZip = require('jszip');
 const { DatabaseSync } = require('node:sqlite');
+
+// Chat images are deliberately served through a private protocol instead of file:// or
+// data: URLs.  That keeps the renderer from persisting an unbounded base64 payload in
+// its message state, localStorage, debug logs, or generated markup.
+protocol.registerSchemesAsPrivileged([{
+  scheme: '15code-chat-image',
+  privileges: { standard: true, secure: true, supportFetchAPI: true },
+}]);
 
 let chatLogPath = null;
 let updateReady = false;
@@ -15,6 +25,100 @@ let catalogUpdateUrl = null;
 let volatileSessionToken = null;
 let volatileApiKey = null;
 let chatDatabase = null;
+
+const CHAT_IMAGE_ASSET_DIR = 'chat-image-assets';
+const CHAT_IMAGE_PROTOCOL = '15code-chat-image';
+const MAX_CHAT_IMAGE_ASSET_BYTES = 20 * 1024 * 1024;
+const MAX_CHAT_IMAGE_CACHE_BYTES = 512 * 1024 * 1024;
+const CHAT_IMAGE_DELETED_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
+const CHAT_IMAGE_ORPHAN_FILE_RETENTION_MS = 24 * 60 * 60 * 1000;
+const SHUTDOWN_FLUSH_TIMEOUT_MS = 2000;
+const MAX_MESSAGE_METADATA_BYTES = 12 * 1024;
+const MAX_CHAT_MESSAGE_CHARS = 500000;
+const MAX_IMAGE_CARD_PROMPT_CHARS = 2000;
+const SAFE_ID_RE = /^[A-Za-z0-9_-]{1,128}$/;
+const IMAGE_ASSET_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const IMAGE_STORAGE_KEY_RE = /^[0-9a-f-]{36}\.(?:png|jpg|webp)$/i;
+const IMAGE_MIME_TO_EXTENSION = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp' };
+const IMAGE_OPERATION_VALUES = new Set(['generate', 'edit', 'import']);
+const IMAGE_STATUS_VALUES = new Set(['pending', 'complete', 'error']);
+const IMAGE_SIZE_VALUES = new Set(['1024x1024', '1536x1024', '1024x1536']);
+const IMAGE_QUALITY_VALUES = new Set(['low', 'medium', 'high']);
+const IMAGE_FORMAT_VALUES = new Set(['png', 'jpeg', 'webp']);
+const EMBEDDED_IMAGE_DATA_URL_RE = /data:image\/(?:png|jpe?g|webp);base64,[A-Za-z0-9+/=]+/gi;
+const LINUX_SECRET_SERVICE = 'com.15code.desktop';
+const LINUX_SECRET_TIMEOUT_MS = 5000;
+
+// Keep quit coordination independent from Electron globals so the bounded close path can
+// be exercised with VM mocks.  Only renderers that received prepare-to-quit may perform
+// the final conversation save; all other new chat/image IPC is rejected once closing begins.
+function createShutdownCoordinator({ getWindows, closeDatabase, cleanupUnattachedAssetsNow, exitApp,
+  setTimeoutFn = setTimeout, clearTimeoutFn = clearTimeout, timeoutMs = SHUTDOWN_FLUSH_TIMEOUT_MS }) {
+  let inProgress = false;
+  let finalizing = false;
+  let timer = null;
+  let finishPromise = null;
+  const pendingRendererIds = new Set();
+
+  const finish = ({ timedOut }) => {
+    if (finishPromise) return finishPromise;
+    finalizing = true;
+    if (timer) clearTimeoutFn(timer);
+    timer = null;
+    finishPromise = (async () => {
+      // The timeout path has no renderer confirmation. Remove database rows for assets
+      // that cannot be reconstructed from messages before the database is closed.
+      if (timedOut) {
+        try { await cleanupUnattachedAssetsNow(); } catch (error) { console.warn('Timed-out chat image cleanup failed:', error.message); }
+      }
+      try { await closeDatabase(); } catch (error) { console.warn('Chat database close failed:', error.message); }
+      exitApp(0);
+    })();
+    return finishPromise;
+  };
+
+  return {
+    begin(event) {
+      if (finalizing) return;
+      event?.preventDefault?.();
+      if (inProgress) return;
+      inProgress = true;
+      for (const win of getWindows()) {
+        if (!win || win.isDestroyed?.()) continue;
+        const sender = win.webContents;
+        if (!sender || sender.isDestroyed?.()) continue;
+        try {
+          pendingRendererIds.add(sender.id);
+          sender.send('app:prepare-to-quit');
+        } catch {
+          pendingRendererIds.delete(sender.id);
+        }
+      }
+      if (!pendingRendererIds.size) {
+        void finish({ timedOut: false });
+        return;
+      }
+      timer = setTimeoutFn(() => { void finish({ timedOut: true }); }, timeoutMs);
+    },
+    acknowledge(senderId) {
+      if (!inProgress || finalizing || !pendingRendererIds.has(senderId)) return { ok: false };
+      pendingRendererIds.delete(senderId);
+      if (!pendingRendererIds.size) void finish({ timedOut: false });
+      return { ok: true };
+    },
+    isIpcAllowed(senderId, channel) {
+      if (!inProgress) return true;
+      return !finalizing && channel === 'conversations:save' && pendingRendererIds.has(senderId);
+    },
+    getState() {
+      return { inProgress, finalizing, pendingRendererIds: [...pendingRendererIds] };
+    },
+  };
+}
+
+function closeChatDatabase() {
+  try { chatDatabase?.close(); } finally { chatDatabase = null; }
+}
 
 function getSessionFilePath() {
   return path.join(app.getPath('userData'), 'session-token.bin');
@@ -24,35 +128,198 @@ function getApiKeyFilePath() {
   return path.join(app.getPath('userData'), 'api-key.bin');
 }
 
+function getCredentialFilePath(credential) {
+  if (credential === 'session-token') return getSessionFilePath();
+  if (credential === 'api-key') return getApiKeyFilePath();
+  throw new Error('未知安全凭证类型');
+}
+
+// Electron reports basic_text as "available" on Linux, but it is deliberately not
+// encryption. Never write an account credential through that backend. Windows keeps
+// its normal DPAPI implementation and macOS keeps Keychain through safeStorage.
+function hasSecureSafeStorage(storage = safeStorage, platform = process.platform) {
+  try {
+    if (!storage.isEncryptionAvailable()) return false;
+    if (platform !== 'linux') return true;
+    const backend = typeof storage.getSelectedStorageBackend === 'function'
+      ? storage.getSelectedStorageBackend()
+      : null;
+    return Boolean(backend && backend !== 'basic_text');
+  } catch {
+    return false;
+  }
+}
+
+function linuxSecretAttributes(credential) {
+  return ['service', LINUX_SECRET_SERVICE, 'credential', credential];
+}
+
+// secret-tool talks to the desktop's Secret Service (normally GNOME Keyring). Input is
+// passed on stdin, never a command line or log. This is intentionally Linux-only: it is
+// a fallback for Electron's unavailable/unsafe Linux backend, not a replacement for
+// Windows DPAPI or macOS Keychain.
+function runLinuxSecretTool(args, input) {
+  try {
+    return spawnSync('secret-tool', args, {
+      input,
+      encoding: 'utf8',
+      timeout: LINUX_SECRET_TIMEOUT_MS,
+      windowsHide: true,
+    });
+  } catch (error) {
+    return { error };
+  }
+}
+
+function storeLinuxSecret(credential, value, runTool = runLinuxSecretTool) {
+  const result = runTool([
+    'store', '--label=15code Desktop', ...linuxSecretAttributes(credential),
+  ], value);
+  return !result?.error && result.status === 0;
+}
+
+function loadLinuxSecret(credential, runTool = runLinuxSecretTool) {
+  const result = runTool(['lookup', ...linuxSecretAttributes(credential)]);
+  if (result?.error || result.status !== 0 || typeof result.stdout !== 'string') return null;
+  // secret-tool terminates its textual output with a single newline. Bearer JWTs and
+  // API keys never contain newlines, so removing only that transport delimiter is safe.
+  return result.stdout.replace(/\r?\n$/, '') || null;
+}
+
+function clearLinuxSecret(credential, runTool = runLinuxSecretTool) {
+  const result = runTool(['clear', ...linuxSecretAttributes(credential)]);
+  return !result?.error && result.status === 0;
+}
+
+function removeCredentialFile(credential) {
+  try { fs.rmSync(getCredentialFilePath(credential), { force: true }); } catch {}
+}
+
+function saveCredential(credential, value, storage = safeStorage, platform = process.platform, runTool = runLinuxSecretTool) {
+  const target = getCredentialFilePath(credential);
+  if (hasSecureSafeStorage(storage, platform)) {
+    const encrypted = storage.encryptString(value);
+    const temporary = target + '.tmp';
+    fs.writeFileSync(temporary, encrypted, { mode: 0o600 });
+    fs.renameSync(temporary, target);
+    fs.chmodSync(target, 0o600);
+    return { persisted: true, storage: 'safeStorage' };
+  }
+  if (platform === 'linux') {
+    // Versions that used basic_text may have left a plaintext file behind. Remove it
+    // before storing in Secret Service, and never attempt to recover from it.
+    removeCredentialFile(credential);
+    if (storeLinuxSecret(credential, value, runTool)) {
+      return { persisted: true, storage: 'secret-service' };
+    }
+  }
+  return { persisted: false, storage: 'memory' };
+}
+
+function loadCredential(credential, storage = safeStorage, platform = process.platform, runTool = runLinuxSecretTool) {
+  if (hasSecureSafeStorage(storage, platform)) {
+    try { return storage.decryptString(fs.readFileSync(getCredentialFilePath(credential))); } catch { return null; }
+  }
+  if (platform === 'linux') {
+    // Do not read a legacy basic_text file even if it exists.
+    removeCredentialFile(credential);
+    return loadLinuxSecret(credential, runTool);
+  }
+  return null;
+}
+
+function clearCredential(credential, platform = process.platform, runTool = runLinuxSecretTool) {
+  removeCredentialFile(credential);
+  if (platform === 'linux') clearLinuxSecret(credential, runTool);
+}
+
+function getChatImageAssetDir() {
+  return path.join(app.getPath('userData'), CHAT_IMAGE_ASSET_DIR);
+}
+
+function getChatImageAssetPath(storageKey) {
+  if (!IMAGE_STORAGE_KEY_RE.test(String(storageKey || ''))) throw new Error('图片资源标识无效');
+  return path.join(getChatImageAssetDir(), storageKey);
+}
+
+function imageMimeFromStorageKey(storageKey) {
+  const extension = path.extname(storageKey).toLowerCase();
+  if (extension === '.png') return 'image/png';
+  if (extension === '.jpg') return 'image/jpeg';
+  if (extension === '.webp') return 'image/webp';
+  return null;
+}
+
+function chatImageUrl(assetId) {
+  if (!IMAGE_ASSET_ID_RE.test(String(assetId || ''))) throw new Error('图片资源标识无效');
+  return `${CHAT_IMAGE_PROTOCOL}://asset/${assetId}`;
+}
+
+function validateConversationId(id) {
+  if (!SAFE_ID_RE.test(String(id || ''))) throw new Error('会话标识无效');
+  return String(id);
+}
+
+function sanitizeImageMetadata(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const assetId = String(value.assetId || '');
+  const operation = String(value.operation || '');
+  const status = String(value.status || 'complete');
+  const format = String(value.format || 'png');
+  const mime = String(value.mime || (format === 'jpeg' ? 'image/jpeg' : `image/${format}`));
+  const size = String(value.size || '1024x1024');
+  const quality = String(value.quality || 'low');
+  const prompt = String(value.prompt || '').trim();
+  const sourceAssetId = value.sourceAssetId ? String(value.sourceAssetId) : null;
+  const error = value.error ? String(value.error).slice(0, 500) : null;
+  const expectedExtension = format === 'jpeg' ? 'jpg' : format;
+  if (!IMAGE_ASSET_ID_RE.test(assetId) || !IMAGE_OPERATION_VALUES.has(operation)
+    || !IMAGE_STATUS_VALUES.has(status) || !IMAGE_FORMAT_VALUES.has(format)
+    || IMAGE_MIME_TO_EXTENSION[mime] !== expectedExtension || !IMAGE_SIZE_VALUES.has(size) || !IMAGE_QUALITY_VALUES.has(quality)
+    || prompt.length > MAX_IMAGE_CARD_PROMPT_CHARS
+    || (sourceAssetId && !IMAGE_ASSET_ID_RE.test(sourceAssetId))) return null;
+  const metadata = { assetId, operation, status, format, mime, size, quality, prompt, sourceAssetId, error };
+  return Buffer.byteLength(JSON.stringify(metadata), 'utf8') <= MAX_MESSAGE_METADATA_BYTES ? metadata : null;
+}
+
+function sanitizeStoredMessage(message) {
+  if (!message || !['user', 'assistant'].includes(message.role)) return null;
+  const content = String(message.content || '').replace(EMBEDDED_IMAGE_DATA_URL_RE, '[嵌入式图片数据未保存]').slice(0, MAX_CHAT_MESSAGE_CHARS);
+  const image = sanitizeImageMetadata(message.image);
+  const type = image ? 'image' : 'text';
+  return { role: message.role, content, type, image };
+}
+
+function parseStoredImageMetadata(raw) {
+  if (typeof raw !== 'string' || Buffer.byteLength(raw, 'utf8') > MAX_MESSAGE_METADATA_BYTES) return null;
+  try { return sanitizeImageMetadata(JSON.parse(raw)); } catch { return null; }
+}
+
+function hasExpectedImageSignature(mime, bytes) {
+  if (!Buffer.isBuffer(bytes)) return false;
+  if (mime === 'image/png') return bytes.length >= 8 && bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+  if (mime === 'image/jpeg') return bytes.length >= 4 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
+  if (mime === 'image/webp') return bytes.length >= 12 && bytes.subarray(0, 4).toString('ascii') === 'RIFF' && bytes.subarray(8, 12).toString('ascii') === 'WEBP';
+  return false;
+}
+
 function saveApiKey(apiKey) {
   if (typeof apiKey !== 'string' || apiKey.length < 8 || apiKey.length > 16384) {
     throw new Error('API Key 格式无效');
   }
   volatileApiKey = apiKey;
-  if (!safeStorage.isEncryptionAvailable()) return { ok: true, persisted: false };
-  const encrypted = safeStorage.encryptString(apiKey);
-  const target = getApiKeyFilePath();
-  const temporary = target + '.tmp';
-  fs.writeFileSync(temporary, encrypted, { mode: 0o600 });
-  fs.renameSync(temporary, target);
-  fs.chmodSync(target, 0o600);
-  return { ok: true, persisted: true };
+  return { ok: true, ...saveCredential('api-key', apiKey) };
 }
 
 function loadApiKey() {
   if (volatileApiKey) return volatileApiKey;
-  if (!safeStorage.isEncryptionAvailable()) return null;
-  try {
-    volatileApiKey = safeStorage.decryptString(fs.readFileSync(getApiKeyFilePath()));
-    return volatileApiKey;
-  } catch {
-    return null;
-  }
+  volatileApiKey = loadCredential('api-key');
+  return volatileApiKey;
 }
 
 function clearApiKey() {
   volatileApiKey = null;
-  try { fs.rmSync(getApiKeyFilePath(), { force: true }); } catch {}
+  clearCredential('api-key');
 }
 
 function saveSessionToken(token) {
@@ -60,35 +327,18 @@ function saveSessionToken(token) {
     throw new Error('登录凭证格式无效');
   }
   volatileSessionToken = token;
-  if (!safeStorage.isEncryptionAvailable()) {
-    return { ok: true, persisted: false };
-  }
-  const encrypted = safeStorage.encryptString(token);
-  const sessionFile = getSessionFilePath();
-  const temporaryFile = sessionFile + '.tmp';
-  fs.writeFileSync(temporaryFile, encrypted, { mode: 0o600 });
-  fs.renameSync(temporaryFile, sessionFile);
-  fs.chmodSync(sessionFile, 0o600);
-  return { ok: true, persisted: true };
+  return { ok: true, ...saveCredential('session-token', token) };
 }
 
 function loadSessionToken() {
   if (volatileSessionToken) return volatileSessionToken;
-  if (!safeStorage.isEncryptionAvailable()) return null;
-  try {
-    const encrypted = fs.readFileSync(getSessionFilePath());
-    volatileSessionToken = safeStorage.decryptString(encrypted);
-    return volatileSessionToken;
-  } catch {
-    return null;
-  }
+  volatileSessionToken = loadCredential('session-token');
+  return volatileSessionToken;
 }
 
 function clearSessionToken() {
   volatileSessionToken = null;
-  try {
-    fs.rmSync(getSessionFilePath(), { force: true });
-  } catch {}
+  clearCredential('session-token');
   clearApiKey();
   return { ok: true };
 }
@@ -151,32 +401,103 @@ function getChatDatabase() {
     CREATE INDEX IF NOT EXISTS idx_conversations_active ON conversations(deleted, pinned, updated_at);
     CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id, id);
   `);
+  // v1.0.17 stored only role/content.  Additive columns preserve old histories and
+  // let image cards refer to a bounded local asset without changing text semantics.
+  const messageColumns = new Set(chatDatabase.prepare('PRAGMA table_info(messages)').all().map(column => column.name));
+  if (!messageColumns.has('client_id')) chatDatabase.exec('ALTER TABLE messages ADD COLUMN client_id TEXT');
+  if (!messageColumns.has('type')) chatDatabase.exec("ALTER TABLE messages ADD COLUMN type TEXT NOT NULL DEFAULT 'text'");
+  if (!messageColumns.has('metadata')) chatDatabase.exec('ALTER TABLE messages ADD COLUMN metadata TEXT');
+  chatDatabase.exec(`
+    CREATE INDEX IF NOT EXISTS idx_messages_client ON messages(conversation_id, client_id);
+    CREATE TABLE IF NOT EXISTS image_assets (
+      asset_id TEXT PRIMARY KEY,
+      conversation_id TEXT NOT NULL,
+      message_key TEXT,
+      storage_key TEXT NOT NULL UNIQUE,
+      mime TEXT NOT NULL,
+      byte_size INTEGER NOT NULL,
+      format TEXT NOT NULL,
+      operation TEXT NOT NULL,
+      source_asset_id TEXT,
+      prompt TEXT NOT NULL DEFAULT '',
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      FOREIGN KEY(conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_image_assets_conversation ON image_assets(conversation_id, message_key, updated_at);
+  `);
+  void cleanupChatImageAssets().catch(() => {});
   return chatDatabase;
 }
 
 function saveConversation({ id, title, model, draft = '', messages = [] }) {
-  if (!id || !Array.isArray(messages)) throw new Error('会话数据无效');
+  id = validateConversationId(id);
+  if (!Array.isArray(messages)) throw new Error('会话数据无效');
   const db = getChatDatabase();
   const now = Date.now();
   const existing = db.prepare('SELECT created_at, pinned, deleted FROM conversations WHERE id = ?').get(id);
+  const normalizedMessages = messages.slice(-200).map((message, index) => {
+    const clean = sanitizeStoredMessage(message);
+    if (!clean) return null;
+    const clientId = SAFE_ID_RE.test(String(message.id || '')) ? String(message.id) : randomUUID();
+    return { ...clean, clientId, createdAt: Number(message.createdAt) || now + index };
+  }).filter(Boolean);
+  const imageMessages = normalizedMessages.filter(message => message.image);
+  // An evicted asset from a deleted/recovered conversation remains a harmless
+  // unavailable card.  Only complete assets must still exist and be owned here.
+  const attachedImageMessages = imageMessages.filter(message => message.image.status === 'complete');
+  const assetIds = attachedImageMessages.map(message => message.image.assetId);
+  const sourceAssetIds = attachedImageMessages.map(message => message.image.sourceAssetId).filter(Boolean);
+  if (new Set(assetIds).size !== assetIds.length) throw new Error('同一图片不能重复作为消息结果');
   db.exec('BEGIN IMMEDIATE');
+  let removedAssets = [];
   try {
-    db.prepare(`INSERT OR REPLACE INTO conversations
-      (id,title,model,draft,pinned,deleted,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?)`)
-      .run(id, String(title || '新对话').slice(0, 120), String(model || ''), String(draft || ''),
+    db.prepare(`INSERT INTO conversations (id,title,model,draft,pinned,deleted,created_at,updated_at)
+      VALUES (?,?,?,?,?,?,?,?)
+      ON CONFLICT(id) DO UPDATE SET title=excluded.title, model=excluded.model, draft=excluded.draft, updated_at=excluded.updated_at`)
+      .run(id, String(title || '新对话').slice(0, 120), String(model || ''), String(draft || '').slice(0, MAX_CHAT_MESSAGE_CHARS),
         existing?.pinned || 0, existing?.deleted || 0, existing?.created_at || now, now);
-    db.prepare('DELETE FROM messages WHERE conversation_id = ?').run(id);
-    const insert = db.prepare('INSERT INTO messages(conversation_id,role,content,created_at) VALUES (?,?,?,?)');
-    messages.slice(-200).forEach((message, index) => {
-      if (message && ['user', 'assistant'].includes(message.role)) {
-        insert.run(id, message.role, String(message.content || ''), now + index);
+    if (assetIds.length) {
+      const placeholders = assetIds.map(() => '?').join(',');
+      const owned = db.prepare(`SELECT asset_id FROM image_assets WHERE conversation_id = ? AND asset_id IN (${placeholders})`)
+        .all(id, ...assetIds);
+      if (owned.length !== assetIds.length) throw new Error('图片资源不属于当前会话或已被清理');
+      if (sourceAssetIds.length) {
+        const sourcePlaceholders = sourceAssetIds.map(() => '?').join(',');
+        const sources = db.prepare(`SELECT asset_id FROM image_assets WHERE conversation_id = ? AND asset_id IN (${sourcePlaceholders})`)
+          .all(id, ...sourceAssetIds);
+        if (new Set(sources.map(source => source.asset_id)).size !== new Set(sourceAssetIds).size) {
+          throw new Error('图片源不属于当前会话或已被清理');
+        }
       }
+    }
+    db.prepare('DELETE FROM messages WHERE conversation_id = ?').run(id);
+    const insert = db.prepare('INSERT INTO messages(conversation_id,client_id,role,content,type,metadata,created_at) VALUES (?,?,?,?,?,?,?)');
+    normalizedMessages.forEach(message => {
+      insert.run(id, message.clientId, message.role, message.content, message.type,
+        message.image ? JSON.stringify(message.image) : null, message.createdAt);
     });
+    if (assetIds.length) {
+      const placeholders = assetIds.map(() => '?').join(',');
+      removedAssets = db.prepare(`SELECT asset_id, storage_key FROM image_assets
+        WHERE conversation_id = ? AND asset_id NOT IN (${placeholders})`).all(id, ...assetIds);
+      db.prepare(`DELETE FROM image_assets WHERE conversation_id = ? AND asset_id NOT IN (${placeholders})`).run(id, ...assetIds);
+      const attach = db.prepare('UPDATE image_assets SET updated_at = ? WHERE asset_id = ? AND conversation_id = ? AND message_key = ?');
+      attachedImageMessages.forEach(message => {
+        if (attach.run(now, message.image.assetId, id, message.clientId).changes !== 1) {
+          throw new Error('图片消息关联不匹配');
+        }
+      });
+    } else {
+      removedAssets = db.prepare('SELECT asset_id, storage_key FROM image_assets WHERE conversation_id = ?').all(id);
+      db.prepare('DELETE FROM image_assets WHERE conversation_id = ?').run(id);
+    }
     db.exec('COMMIT');
   } catch (error) {
     db.exec('ROLLBACK');
     throw error;
   }
+  removedAssets.forEach(asset => void removeChatImageFile(asset.storage_key));
   return { ok: true };
 }
 
@@ -184,7 +505,17 @@ function loadConversation(id) {
   const db = getChatDatabase();
   const conversation = db.prepare('SELECT * FROM conversations WHERE id = ?').get(id);
   if (!conversation) return null;
-  const messages = db.prepare('SELECT role, content FROM messages WHERE conversation_id = ? ORDER BY id').all(id);
+  const messages = db.prepare('SELECT client_id, role, content, type, metadata, created_at FROM messages WHERE conversation_id = ? ORDER BY id').all(id)
+    .map(message => {
+      let image = parseStoredImageMetadata(message.metadata);
+      // Asset ownership is verified at save time. A cache-evicted deleted-conversation
+      // asset stays as an explicitly unavailable card rather than resolving to a path.
+      if (image && !db.prepare('SELECT 1 FROM image_assets WHERE asset_id = ? AND conversation_id = ?').get(image.assetId, id)) {
+        image = { ...image, status: 'error', error: '图片文件已被清理或不可用' };
+      }
+      return { id: message.client_id || randomUUID(), role: message.role, content: message.content,
+        createdAt: message.created_at, ...(image ? { type: 'image', image: { ...image, url: chatImageUrl(image.assetId) } } : {}) };
+    });
   return { ...conversation, messages };
 }
 
@@ -197,6 +528,7 @@ function listConversations({ query = '', deleted = false } = {}) {
 }
 
 function updateConversation({ id, title, pinned, deleted, draft }) {
+  id = validateConversationId(id);
   const db = getChatDatabase();
   const row = db.prepare('SELECT * FROM conversations WHERE id = ?').get(id);
   if (!row) throw new Error('会话不存在');
@@ -204,8 +536,272 @@ function updateConversation({ id, title, pinned, deleted, draft }) {
     .run(title === undefined ? row.title : String(title).slice(0, 120),
       pinned === undefined ? row.pinned : (pinned ? 1 : 0),
       deleted === undefined ? row.deleted : (deleted ? 1 : 0),
-      draft === undefined ? row.draft : String(draft), Date.now(), id);
+      draft === undefined ? row.draft : String(draft).slice(0, MAX_CHAT_MESSAGE_CHARS), Date.now(), id);
+  if (deleted) void cleanupChatImageAssets().catch(() => {});
   return { ok: true };
+}
+
+function parseImageDataUrl(dataUrl) {
+  const match = String(dataUrl || '').match(/^data:(image\/(?:png|jpeg|webp));base64,([A-Za-z0-9+/=]+)$/);
+  if (!match) throw new Error('图片数据无效');
+  const bytes = Buffer.from(match[2], 'base64');
+  if (!bytes.length || bytes.length > MAX_CHAT_IMAGE_ASSET_BYTES) throw new Error('图片数据为空或超过 20 MB');
+  if (Buffer.from(bytes.toString('base64'), 'base64').length !== bytes.length) throw new Error('图片编码无效');
+  if (!hasExpectedImageSignature(match[1], bytes)) throw new Error('图片格式无效');
+  return { mime: match[1], bytes };
+}
+
+async function removeChatImageFile(storageKey) {
+  try { await fs.promises.rm(getChatImageAssetPath(storageKey), { force: true }); } catch {}
+}
+
+async function writeChatImageAsset({ conversationId, messageId, bytes, mime, format, operation, prompt = '', sourceAssetId = null }) {
+  conversationId = validateConversationId(conversationId);
+  if (!SAFE_ID_RE.test(String(messageId || ''))) throw new Error('图片消息标识无效');
+  if (!Buffer.isBuffer(bytes) || !bytes.length || bytes.length > MAX_CHAT_IMAGE_ASSET_BYTES) {
+    throw new Error('图片数据为空或超过 20 MB');
+  }
+  const expectedExtension = format === 'jpeg' ? 'jpg' : format;
+  if (!IMAGE_MIME_TO_EXTENSION[mime] || IMAGE_MIME_TO_EXTENSION[mime] !== expectedExtension
+    || !IMAGE_FORMAT_VALUES.has(format) || !IMAGE_OPERATION_VALUES.has(operation)
+    || String(prompt).length > MAX_IMAGE_CARD_PROMPT_CHARS
+    || (sourceAssetId && !IMAGE_ASSET_ID_RE.test(String(sourceAssetId))) || !hasExpectedImageSignature(mime, bytes)) {
+    throw new Error('图片资源参数无效');
+  }
+  if (shutdownCoordinator?.getState().inProgress) throw new Error('应用正在关闭，图片结果未保存');
+  const db = getChatDatabase();
+  const conversation = db.prepare('SELECT id FROM conversations WHERE id = ?').get(conversationId);
+  if (!conversation) throw new Error('请先保存会话后再生成图片');
+  if (sourceAssetId && !db.prepare('SELECT 1 FROM image_assets WHERE asset_id = ? AND conversation_id = ?').get(sourceAssetId, conversationId)) {
+    throw new Error('源图片不属于当前会话或已被清理');
+  }
+  await cleanupChatImageAssets();
+  // The generation/edit request may have been accepted before quit started. Do not
+  // create a new asset after the bounded shutdown coordinator has begun closing.
+  if (shutdownCoordinator?.getState().inProgress) throw new Error('应用正在关闭，图片结果未保存');
+  const cacheBytes = Number(db.prepare('SELECT COALESCE(SUM(byte_size), 0) AS bytes FROM image_assets').get().bytes || 0);
+  if (cacheBytes + bytes.length > MAX_CHAT_IMAGE_CACHE_BYTES) {
+    throw new Error('聊天图片本地缓存已达 512 MB 上限；请保存需要保留的图片并删除旧会话后重试');
+  }
+  const assetId = randomUUID();
+  const extension = IMAGE_MIME_TO_EXTENSION[mime];
+  const storageKey = `${assetId}.${extension}`;
+  const target = getChatImageAssetPath(storageKey);
+  await fs.promises.mkdir(getChatImageAssetDir(), { recursive: true, mode: 0o700 });
+  const temporary = `${target}.tmp-${process.pid}-${Date.now()}`;
+  try {
+    await fs.promises.writeFile(temporary, bytes, { mode: 0o600 });
+    await fs.promises.rename(temporary, target);
+    await fs.promises.chmod(target, 0o600);
+    if (shutdownCoordinator?.getState().inProgress) throw new Error('应用正在关闭，图片结果未保存');
+    const now = Date.now();
+    db.prepare(`INSERT INTO image_assets
+      (asset_id,conversation_id,message_key,storage_key,mime,byte_size,format,operation,source_asset_id,prompt,created_at,updated_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+      assetId, conversationId, String(messageId), storageKey, mime, bytes.length, format, operation,
+      sourceAssetId || null, String(prompt).trim(), now, now
+    );
+    return { assetId, mime, format, operation, sourceAssetId: sourceAssetId || null, url: chatImageUrl(assetId) };
+  } catch (error) {
+    try { await fs.promises.rm(temporary, { force: true }); } catch {}
+    try { await fs.promises.rm(target, { force: true }); } catch {}
+    throw error;
+  }
+}
+
+async function selectChatImageForEdit(_event, payload = {}) {
+  const conversationId = validateConversationId(payload.conversationId);
+  const messageId = String(payload.messageId || '');
+  const { canceled, filePaths } = await dialog.showOpenDialog(BrowserWindow.getFocusedWindow(), {
+    properties: ['openFile'],
+    filters: [{ name: '图片', extensions: ['png', 'jpg', 'jpeg', 'webp'] }],
+  });
+  if (canceled || !filePaths[0]) return { ok: false };
+  const filePath = path.resolve(filePaths[0]);
+  const stat = await fs.promises.stat(filePath);
+  if (!stat.isFile() || stat.size <= 0 || stat.size > MAX_CHAT_IMAGE_ASSET_BYTES) throw new Error('输入图片无效或超过 20 MB');
+  const extension = path.extname(filePath).toLowerCase();
+  const mime = extension === '.jpg' || extension === '.jpeg' ? 'image/jpeg' : `image/${extension.slice(1)}`;
+  const format = mime === 'image/jpeg' ? 'jpeg' : extension.slice(1);
+  if (!IMAGE_MIME_TO_EXTENSION[mime] || !IMAGE_FORMAT_VALUES.has(format)) throw new Error('不支持的图片格式');
+  const asset = await writeChatImageAsset({
+    conversationId, messageId, bytes: await fs.promises.readFile(filePath), mime, format, operation: 'import', prompt: '',
+  });
+  return { ok: true, name: path.basename(filePath).slice(0, 180), ...asset };
+}
+
+async function generateChatImage(_event, payload = {}) {
+  const conversationId = validateConversationId(payload.conversationId);
+  const messageId = String(payload.messageId || '');
+  if (!SAFE_ID_RE.test(messageId)) throw new Error('图片消息标识无效');
+  const prompt = String(payload.prompt || '').trim();
+  const size = IMAGE_SIZE_VALUES.has(String(payload.size)) ? String(payload.size) : '1024x1024';
+  const quality = IMAGE_QUALITY_VALUES.has(String(payload.quality)) ? String(payload.quality) : 'low';
+  const format = IMAGE_FORMAT_VALUES.has(String(payload.format)) ? String(payload.format) : 'png';
+  if (!prompt || prompt.length > MAX_IMAGE_CARD_PROMPT_CHARS) throw new Error('图片提示词无效或过长');
+  const result = await generateDesktopImage(null, {
+    model: 'gpt-image-2', prompt, size, quality, format, clientRequestId: payload.clientRequestId,
+  });
+  const parsed = parseImageDataUrl(result.dataUrl);
+  const asset = await writeChatImageAsset({ conversationId, messageId, ...parsed, format, operation: 'generate', prompt });
+  return { ...asset, size, quality, prompt, usage: result.usage || null };
+}
+
+async function editChatImage(_event, payload = {}) {
+  const conversationId = validateConversationId(payload.conversationId);
+  const messageId = String(payload.messageId || '');
+  if (!SAFE_ID_RE.test(messageId)) throw new Error('图片消息标识无效');
+  const sourceAssetId = String(payload.sourceAssetId || '');
+  const prompt = String(payload.prompt || '').trim();
+  const size = IMAGE_SIZE_VALUES.has(String(payload.size)) ? String(payload.size) : '1024x1024';
+  const quality = IMAGE_QUALITY_VALUES.has(String(payload.quality)) ? String(payload.quality) : 'low';
+  const format = IMAGE_FORMAT_VALUES.has(String(payload.format)) ? String(payload.format) : 'png';
+  if (!IMAGE_ASSET_ID_RE.test(sourceAssetId) || !prompt || prompt.length > MAX_IMAGE_CARD_PROMPT_CHARS) {
+    throw new Error('图片修改参数无效或过长');
+  }
+  const db = getChatDatabase();
+  const source = db.prepare('SELECT storage_key FROM image_assets WHERE asset_id = ? AND conversation_id = ?').get(sourceAssetId, conversationId);
+  if (!source) throw new Error('源图片不属于当前会话或已被清理');
+  const sourcePath = getChatImageAssetPath(source.storage_key);
+  const stat = await fs.promises.stat(sourcePath).catch(() => null);
+  if (!stat?.isFile() || stat.size <= 0 || stat.size > MAX_CHAT_IMAGE_ASSET_BYTES) throw new Error('源图片已不可用，请重新选择');
+  const result = await editDesktopImage(null, {
+    path: sourcePath, prompt, size, quality, format, clientRequestId: payload.clientRequestId,
+  });
+  const parsed = parseImageDataUrl(result.dataUrl);
+  const asset = await writeChatImageAsset({ conversationId, messageId, ...parsed, format, operation: 'edit', prompt, sourceAssetId });
+  return { ...asset, size, quality, prompt, usage: result.usage || null };
+}
+
+async function saveChatImageAsset(_event, payload = {}) {
+  const conversationId = validateConversationId(payload.conversationId);
+  const assetId = String(payload.assetId || '');
+  if (!IMAGE_ASSET_ID_RE.test(assetId)) throw new Error('图片资源标识无效');
+  const db = getChatDatabase();
+  const asset = db.prepare('SELECT storage_key, format FROM image_assets WHERE asset_id = ? AND conversation_id = ?').get(assetId, conversationId);
+  if (!asset) throw new Error('图片已被清理');
+  const source = getChatImageAssetPath(asset.storage_key);
+  const stat = await fs.promises.stat(source).catch(() => null);
+  if (!stat?.isFile() || stat.size <= 0 || stat.size > MAX_CHAT_IMAGE_ASSET_BYTES) throw new Error('图片文件已不可用');
+  const extension = asset.format === 'jpeg' ? 'jpg' : asset.format;
+  const { canceled, filePath } = await dialog.showSaveDialog(BrowserWindow.getFocusedWindow(), {
+    defaultPath: `15code-image-${Date.now()}.${extension}`,
+    filters: [{ name: '图片', extensions: [extension] }],
+  });
+  if (canceled || !filePath) return { ok: false };
+  await fs.promises.copyFile(source, filePath);
+  return { ok: true, path: filePath };
+}
+
+async function cleanupChatImageAssets() {
+  if (!chatDatabase) return;
+  const db = chatDatabase;
+  const now = Date.now();
+  // Active conversation assets are never evicted by cache pressure.  Deleted conversations
+  // get a 30-day recovery window; only their assets and unreferenced files in this dedicated
+  // directory are eligible for cleanup, so PPT files and other user files are untouched.
+  const expired = db.prepare(`SELECT a.asset_id, a.storage_key FROM image_assets a
+    JOIN conversations c ON c.id = a.conversation_id
+    WHERE c.deleted = 1 AND c.updated_at < ?`).all(now - CHAT_IMAGE_DELETED_RETENTION_MS);
+  if (expired.length) {
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      const remove = db.prepare('DELETE FROM image_assets WHERE asset_id = ?');
+      expired.forEach(asset => remove.run(asset.asset_id));
+      db.exec('COMMIT');
+    } catch (error) { db.exec('ROLLBACK'); throw error; }
+    await Promise.all(expired.map(asset => removeChatImageFile(asset.storage_key)));
+  }
+  const unattached = db.prepare(`SELECT a.asset_id, a.storage_key FROM image_assets a
+    LEFT JOIN messages m ON m.conversation_id = a.conversation_id AND m.client_id = a.message_key
+    WHERE (a.message_key IS NULL OR m.id IS NULL) AND a.created_at < ?`)
+    .all(now - CHAT_IMAGE_ORPHAN_FILE_RETENTION_MS);
+  if (unattached.length) {
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      const remove = db.prepare(`DELETE FROM image_assets WHERE asset_id = ? AND NOT EXISTS (
+        SELECT 1 FROM messages m WHERE m.conversation_id = image_assets.conversation_id AND m.client_id = image_assets.message_key
+      )`);
+      unattached.forEach(asset => remove.run(asset.asset_id));
+      db.exec('COMMIT');
+    } catch (error) { db.exec('ROLLBACK'); throw error; }
+    await Promise.all(unattached.map(asset => removeChatImageFile(asset.storage_key)));
+  }
+  let total = db.prepare('SELECT COALESCE(SUM(byte_size), 0) AS bytes FROM image_assets').get().bytes || 0;
+  if (total > MAX_CHAT_IMAGE_CACHE_BYTES) {
+    const removable = db.prepare(`SELECT a.asset_id, a.storage_key, a.byte_size FROM image_assets a
+      JOIN conversations c ON c.id = a.conversation_id WHERE c.deleted = 1 ORDER BY a.updated_at ASC`).all();
+    const toRemove = [];
+    for (const asset of removable) {
+      if (total <= MAX_CHAT_IMAGE_CACHE_BYTES) break;
+      total -= asset.byte_size;
+      toRemove.push(asset);
+    }
+    if (toRemove.length) {
+      db.exec('BEGIN IMMEDIATE');
+      try {
+        const remove = db.prepare('DELETE FROM image_assets WHERE asset_id = ?');
+        toRemove.forEach(asset => remove.run(asset.asset_id));
+        db.exec('COMMIT');
+      } catch (error) { db.exec('ROLLBACK'); throw error; }
+      await Promise.all(toRemove.map(asset => removeChatImageFile(asset.storage_key)));
+    }
+  }
+  let filenames = [];
+  try { filenames = await fs.promises.readdir(getChatImageAssetDir()); } catch { return; }
+  const known = new Set(db.prepare('SELECT storage_key FROM image_assets').all().map(asset => asset.storage_key));
+  const staleNames = filenames.filter(name => (IMAGE_STORAGE_KEY_RE.test(name) && !known.has(name))
+    || /^[0-9a-f-]{36}\.(?:png|jpg|webp)\.tmp-\d+-\d+$/i.test(name));
+  await Promise.all(staleNames.map(async name => {
+    const target = getChatImageAssetPath(name);
+    const stat = await fs.promises.stat(target).catch(() => null);
+    if (stat?.isFile() && now - stat.mtimeMs > CHAT_IMAGE_ORPHAN_FILE_RETENTION_MS) await fs.promises.rm(target, { force: true });
+  }));
+}
+
+// Unlike the periodic retention cleanup, quit timeout must not leave an image written by
+// a completed generation without a persisted message for another 24 hours.  This is kept
+// separate so the normal recovery window remains unchanged for ordinary transient saves.
+async function cleanupUnattachedChatImageAssetsNow({ db = chatDatabase, removeFile = removeChatImageFile } = {}) {
+  if (!db) return [];
+  const unattached = db.prepare(`SELECT a.asset_id, a.storage_key FROM image_assets a
+    LEFT JOIN messages m ON m.conversation_id = a.conversation_id AND m.client_id = a.message_key
+    WHERE a.message_key IS NULL OR m.id IS NULL`).all();
+  if (!unattached.length) return [];
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    const remove = db.prepare(`DELETE FROM image_assets WHERE asset_id = ? AND NOT EXISTS (
+      SELECT 1 FROM messages m WHERE m.conversation_id = image_assets.conversation_id AND m.client_id = image_assets.message_key
+    )`);
+    unattached.forEach(asset => remove.run(asset.asset_id));
+    db.exec('COMMIT');
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+  await Promise.all(unattached.map(asset => removeFile(asset.storage_key)));
+  return unattached.map(asset => asset.asset_id);
+}
+
+async function serveChatImageAsset(request) {
+  try {
+    const url = new URL(request.url);
+    const assetId = decodeURIComponent(url.pathname.replace(/^\//, ''));
+    if (url.hostname !== 'asset' || !IMAGE_ASSET_ID_RE.test(assetId)) return new Response('Not found', { status: 404 });
+    const db = getChatDatabase();
+    const asset = db.prepare('SELECT storage_key, mime, byte_size FROM image_assets WHERE asset_id = ?').get(assetId);
+    if (!asset || asset.byte_size <= 0 || asset.byte_size > MAX_CHAT_IMAGE_ASSET_BYTES) return new Response('Not found', { status: 404 });
+    const filePath = getChatImageAssetPath(asset.storage_key);
+    const bytes = await fs.promises.readFile(filePath);
+    if (bytes.length !== asset.byte_size || bytes.length > MAX_CHAT_IMAGE_ASSET_BYTES
+      || imageMimeFromStorageKey(asset.storage_key) !== asset.mime
+      || !hasExpectedImageSignature(asset.mime, bytes)) {
+      return new Response('Not found', { status: 404 });
+    }
+    return new Response(bytes, { headers: { 'Content-Type': asset.mime, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' } });
+  } catch {
+    return new Response('Not found', { status: 404 });
+  }
 }
 
 function normalizeExternalUrl(rawUrl) {
@@ -970,8 +1566,27 @@ function createWindow() {
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
+const shutdownCoordinator = createShutdownCoordinator({
+  getWindows: () => BrowserWindow.getAllWindows(),
+  closeDatabase: closeChatDatabase,
+  cleanupUnattachedAssetsNow: cleanupUnattachedChatImageAssetsNow,
+  exitApp: (code) => app.exit(code),
+});
+
+function rejectIpcWhileShuttingDown(event, channel) {
+  if (shutdownCoordinator.isIpcAllowed(event.sender?.id, channel)) return;
+  throw new Error('应用正在关闭，请稍后重试');
+}
+
+function guardedIpcHandler(channel, handler) {
+  ipcMain.handle(channel, (event, ...args) => {
+    rejectIpcWhileShuttingDown(event, channel);
+    return handler(event, ...args);
+  });
+}
+
 // 导出文件（IPC）
-ipcMain.handle('save-file', async (_e, { content, defaultName }) => {
+guardedIpcHandler('save-file', async (_e, { content, defaultName }) => {
   const win = BrowserWindow.getFocusedWindow();
   const { canceled, filePath } = await dialog.showSaveDialog(win, {
     defaultPath: defaultName,
@@ -986,42 +1601,48 @@ ipcMain.handle('save-file', async (_e, { content, defaultName }) => {
 });
 
 // 打开外部链接
-ipcMain.handle('open-external', (_e, url) => openExternalUrl(url));
+guardedIpcHandler('open-external', (_e, url) => openExternalUrl(url));
 
-ipcMain.handle('auth:get-session', () => loadSessionToken());
-ipcMain.handle('auth:set-session', (_e, token) => saveSessionToken(token));
-ipcMain.handle('auth:clear-session', () => clearSessionToken());
-ipcMain.handle('account:bootstrap', () => bootstrapAccount());
+guardedIpcHandler('auth:get-session', () => loadSessionToken());
+guardedIpcHandler('auth:set-session', (_e, token) => saveSessionToken(token));
+guardedIpcHandler('auth:clear-session', () => clearSessionToken());
+guardedIpcHandler('account:bootstrap', () => bootstrapAccount());
 
-ipcMain.handle('get-app-info', () => {
+guardedIpcHandler('get-app-info', () => {
   if (!chatLogPath) chatLogPath = path.join(app.getPath('userData'), 'chat-debug.log');
   return { version: app.getVersion(), chatLogPath, hasApiCredential: Boolean(loadApiKey()) };
 });
 
-ipcMain.handle('check-for-updates', () => checkForUpdates(true));
+guardedIpcHandler('check-for-updates', () => checkForUpdates(true));
 
-ipcMain.handle('install-update', () => {
+guardedIpcHandler('install-update', () => {
   if (catalogUpdateUrl) return openExternalUrl(catalogUpdateUrl).then(() => ({ ok: true, external: true }));
   if (!updateReady) return { ok: false, message: '更新包尚未下载完成' };
   autoUpdater.quitAndInstall(false, true);
   return { ok: true };
 });
 
-ipcMain.handle('chat-completion', sendChatCompletion);
-ipcMain.handle('chat-text-completion', sendChatTextCompletion);
-ipcMain.handle('image:capabilities', getImageCapabilities);
-ipcMain.handle('image:generate', generateDesktopImage);
-ipcMain.handle('image:select-edit', selectImageForEdit);
-ipcMain.handle('image:edit', editDesktopImage);
-ipcMain.handle('image:save', saveGeneratedImage);
-ipcMain.handle('generate-pptx', generatePptx);
-ipcMain.handle('open-pptx-for-analysis', openPptxForAnalysis);
-ipcMain.handle('conversations:save', (_e, data) => saveConversation(data));
-ipcMain.handle('conversations:load', (_e, id) => loadConversation(id));
-ipcMain.handle('conversations:list', (_e, options) => listConversations(options));
-ipcMain.handle('conversations:update', (_e, data) => updateConversation(data));
+guardedIpcHandler('chat-completion', sendChatCompletion);
+guardedIpcHandler('chat-text-completion', sendChatTextCompletion);
+guardedIpcHandler('image:capabilities', getImageCapabilities);
+guardedIpcHandler('image:generate', generateDesktopImage);
+guardedIpcHandler('image:select-edit', selectImageForEdit);
+guardedIpcHandler('image:edit', editDesktopImage);
+guardedIpcHandler('image:save', saveGeneratedImage);
+guardedIpcHandler('chat-image:select', selectChatImageForEdit);
+guardedIpcHandler('chat-image:generate', generateChatImage);
+guardedIpcHandler('chat-image:edit', editChatImage);
+guardedIpcHandler('chat-image:save', saveChatImageAsset);
+guardedIpcHandler('generate-pptx', generatePptx);
+guardedIpcHandler('open-pptx-for-analysis', openPptxForAnalysis);
+guardedIpcHandler('conversations:save', (_e, data) => saveConversation(data));
+guardedIpcHandler('conversations:load', (_e, id) => loadConversation(id));
+guardedIpcHandler('conversations:list', (_e, options) => listConversations(options));
+guardedIpcHandler('conversations:update', (_e, data) => updateConversation(data));
+ipcMain.handle('app:quit-flush-ack', (event) => shutdownCoordinator.acknowledge(event.sender?.id));
 
 app.whenReady().then(() => {
+  protocol.handle(CHAT_IMAGE_PROTOCOL, serveChatImageAsset);
   setupAutoUpdater();
   createWindow();
   setTimeout(() => checkForUpdates(false), 3000);
@@ -1031,11 +1652,25 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
 
-app.on('before-quit', () => {
-  try { chatDatabase?.close(); } catch {}
-  chatDatabase = null;
-});
+app.on('before-quit', (event) => shutdownCoordinator.begin(event));
 
 app.on('activate', () => {
   if (BrowserWindow.getAllWindows().length === 0) createWindow();
 });
+
+// Deliberately narrow test seam: no credentials, filesystem paths, or Electron handles.
+if (process.env.FIFTEENCODE_DESKTOP_TEST === '1') {
+  module.exports = {
+    createShutdownCoordinator,
+    cleanupUnattachedChatImageAssetsNow,
+    // Credential helpers are exported only to verify backend selection. Production code
+    // never exposes them across IPC and no test helper exposes a real credential.
+    hasSecureSafeStorage,
+    saveCredential,
+    loadCredential,
+    clearCredential,
+    // Test-only injection for an in-memory node:sqlite database.  It exposes neither
+    // userData locations nor credentials and is never exported in production.
+    setChatDatabaseForTest: (database) => { chatDatabase = database || null; },
+  };
+}

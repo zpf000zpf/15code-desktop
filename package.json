@@ -1,12 +1,13 @@
 {
   "name": "15code-desktop",
-  "version": "1.0.17",
+  "version": "1.0.18",
   "description": "15code 桌面客户端 — 统一 Claude / GPT / GLM 接入",
   "main": "src/main.js",
   "author": "15code <dev@15code.com>",
   "license": "Apache-2.0",
   "homepage": "https://15code.com",
   "scripts": {
+    "test": "node scripts/test-secure-session-storage.js && node scripts/test-chat-image-shutdown.js && bash scripts/check_catalog_regressions.sh",
     "start": "electron .",
     "dev": "electron . --dev",
     "build:win": "electron-builder --win --x64 --publish never",
@@ -63,11 +64,17 @@
     "linux": {
       "icon": "build/icon.png",
       "target": [
-        "AppImage"
+        "AppImage",
+        "deb"
       ],
       "category": "Office",
       "artifactName": "15code-desktop-${version}.${ext}",
       "syncDesktopName": true
+    },
+    "deb": {
+      "depends": [
+        "libsecret-tools"
+      ]
     },
     "publish": {
       "provider": "github",

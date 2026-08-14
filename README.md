@@ -58,8 +58,10 @@ npm start
 ## 🛠️ 技术栈
 
 - **Electron 43** + 纯 HTML/JS（无前端框架）
-- 登录：15code Bearer Session，使用 Electron `safeStorage` 加密保存
-- API Key：仅在 Electron 主进程使用 `safeStorage` 加密保存，渲染层不可读取
+- 登录：15code Bearer Session，使用 Electron `safeStorage` 加密保存；Linux 上拒绝不安全的 `basic_text` 后端，并在其不可用时使用系统 Secret Service（`secret-tool`）。
+- API Key：仅在 Electron 主进程使用受支持的 `safeStorage` 或 Linux Secret Service 加密保存，渲染层不可读取
+
+Linux 桌面环境需要已解锁的系统密钥环。若 Electron 安全存储不可用，客户端会调用 `secret-tool` 访问 GNOME Keyring；Ubuntu 的 DEB 包会声明 `libsecret-tools` 依赖，AppImage 则需要系统自行提供该命令。密钥环不可用或已锁定时客户端拒绝保存会话，不会将 token 写入明文或弱加密文件。
 - 会话：SQLite 持久化，支持搜索、置顶、重命名、删除、恢复和草稿
 - 模型与升级：读取公共 Catalog，支持离线目录、维护状态和最低版本策略
 - 聊天：流式 SSE 调用 15code 搜索聊天接口，支持主动停止
